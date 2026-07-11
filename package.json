@@ -1,0 +1,29 @@
+{
+  "name": "backwards-k",
+  "version": "1.0.0",
+  "description": "- `index.html` — the whole app (setup, live scoring, box score). Game state saves automatically as you go. - `manifest.json` + `sw.js` — make it installable to a home screen and usable offline, once hosted on a real domain.",
+  "main": "sw.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thomasehardt/backwards-k.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/thomasehardt/backwards-k/issues"
+  },
+  "homepage": "https://github.com/thomasehardt/backwards-k#readme",
+  "dependencies": {
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/cli": "^8.4.1",
+    "@capacitor/core": "^8.4.1"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5"
+  }
+}
