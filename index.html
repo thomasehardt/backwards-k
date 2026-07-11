@@ -144,6 +144,7 @@
     <div class="tab active" data-screen="setup">Lineup</div>
     <div class="tab" data-screen="score">Score</div>
     <div class="tab" data-screen="box">Box</div>
+    <div class="tab" data-screen="recap">Recap</div>
   </div>
 
   <div class="screen" id="history">
@@ -198,6 +199,13 @@
   <div class="screen" id="box">
     <div class="box-pad" id="boxContent"></div>
     <div class="install-note">Add to Home Screen from your browser's share menu to install.</div>
+  </div>
+
+  <div class="screen" id="recap">
+    <div class="box-pad">
+      <button class="btn-save" style="width:100%; margin-bottom:16px; padding:14px; font-size:15px;" id="generateRecapBtn">Generate Recap</button>
+      <div id="recapContent"></div>
+    </div>
   </div>
 </div>
 
@@ -305,7 +313,7 @@ async function saveGame(){
 function startNewGame(){
   game = blankGame();
   saveGame();
-  renderHeader(); renderSetup(); renderScore(); renderBox();
+  renderHeader(); renderSetup(); renderScore(); renderBox(); renderRecap();
   document.querySelector('.tab[data-screen="setup"]').click();
 }
 
@@ -316,7 +324,7 @@ function loadFromHistory(id){
   if(found) {
     game = migrateAtbats(found);
     saveGame();
-    renderHeader(); renderSetup(); renderScore(); renderBox();
+    renderHeader(); renderSetup(); renderScore(); renderBox(); renderRecap();
     document.querySelector('.tab[data-screen="score"]').click();
   }
 }
@@ -695,6 +703,7 @@ function openSheet(team, playerId){
       if(arr.length === 0) delete game.atbats[team][playerId][game.activeInning];
     }
     recalcInning(team, game.activeInning);
+    delete game.recap; // stale now that the underlying at-bats changed
     saveGame(); renderScore(); renderBox(); backdrop.remove();
   });
   backdrop.querySelector('#saveBtn').addEventListener('click', ()=>{
@@ -714,6 +723,7 @@ function openSheet(team, playerId){
       cells.push(newCell);
     }
     if(computed) recalcInning(team, game.activeInning);
+    delete game.recap; // stale now that the underlying at-bats changed
     saveGame(); renderScore(); renderBox(); backdrop.remove();
   });
 }
@@ -743,6 +753,197 @@ function renderBox(){
   `;
 }
 
+/* ---------------- recap: non-LLM play-by-play generation ----------------
+   Template/rule-based narrative generation from game.atbats — no model calls.
+   Pipeline: content selection + base simulation (buildHalfInningEvents, which
+   doubles as recalcInning's logic but keeps player names for narration) ->
+   discourse ordering (two-out / stranded-runner framing) -> template
+   realization (BANK + realizePlay). Every sentence traces back to one at-bat
+   cell, which is what makes the parallel `claims` list below possible — the
+   eventual fact-accuracy scorer (see project tasks) checks those claims
+   against game.atbats instead of trusting the prose. */
+
+const RECAP_ORDINAL = ['','first','second','third','fourth','fifth','sixth','seventh','eighth','ninth'];
+const RECAP_POS = {1:'pitcher',2:'catcher',3:'first baseman',4:'second baseman',5:'third baseman',
+  6:'shortstop',7:'left fielder',8:'center fielder',9:'right fielder'};
+
+function mulberry32(seed){
+  return function(){
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function recapPick(rng, arr){ return arr[Math.floor(rng() * arr.length)]; }
+
+const RECAP_BANK = {
+  '1B': ['singled', 'poked a single through the infield', 'slapped a single into play', 'lined a single into the outfield'],
+  '2B': ['doubled', 'ripped a double into the gap', 'stroked a two-bagger'],
+  '3B': ['tripled', 'legged out a triple'],
+  'HR': ['homered', 'went deep', 'sent one over the fence', 'crushed a home run'],
+  'BB': ['walked', 'drew a walk', 'worked a base on balls'],
+  'HBP': ['was hit by the pitch', 'got plunked'],
+  'K': ['struck out swinging', 'struck out', 'went down swinging'],
+  'KC': ['struck out looking', 'was caught looking for strike three', 'watched a third strike go by'],
+};
+
+function recapFielderPhrase(fielding){
+  if(!fielding) return null;
+  return fielding.split('-').map(n => RECAP_POS[n]).filter(Boolean);
+}
+function recapForceDescription(f){ return `force at ${f[0]==='second baseman'||f[0]==='shortstop' ? 'second' : 'first'}`; }
+
+function realizeRecapPlay(rng, ev){
+  const name = ev.batterName;
+  let clause;
+  if(ev.result in RECAP_BANK){
+    clause = `${name} ${recapPick(rng, RECAP_BANK[ev.result])}`;
+  } else if(ev.result === 'GO'){
+    const f = recapFielderPhrase(ev.fielding);
+    clause = f && f.length > 1
+      ? recapPick(rng, [`${name} grounded out, ${f[0]} to ${f[1]}`, `${name} bounced one to the ${f[0]}, who threw to ${f[1]} for the out`, `${name} grounded to the ${f[0]}, thrown out at first`])
+      : f ? `${name} grounded out to the ${f[0]}` : `${name} grounded out`;
+  } else if(ev.result === 'FO'){
+    const f = recapFielderPhrase(ev.fielding);
+    clause = f ? `${name} flied out to the ${f[0]}` : `${name} flied out`;
+  } else if(ev.result === 'L'){
+    const f = recapFielderPhrase(ev.fielding);
+    clause = f ? `${name} lined out to the ${f[0]}` : `${name} lined out`;
+  } else if(ev.result === 'F'){
+    const f = recapFielderPhrase(ev.fielding);
+    clause = f ? `${name} popped out to the ${f[0]}` : `${name} popped out`;
+  } else if(ev.result === 'DP'){
+    const f = ev.fielding ? ` ${ev.fielding}` : '';
+    clause = `${name} grounded into a${f} double play`;
+  } else if(ev.result === 'SAC'){
+    clause = `${name} laid down a sacrifice`;
+  } else if(ev.result === 'FC'){
+    const f = recapFielderPhrase(ev.fielding);
+    clause = f ? `${name} reached on a fielder's choice, ${recapForceDescription(f)}` : `${name} reached on a fielder's choice`;
+  } else if(ev.result === 'E'){
+    const f = recapFielderPhrase(ev.fielding);
+    clause = f ? `${name} reached on an error by the ${f[0]}` : `${name} reached on an error`;
+  } else {
+    clause = `${name} ${ev.result}`;
+  }
+
+  // Compare by id, not name — two blank/duplicate lineup names must not collide here.
+  const others = ev.scoredRunners.filter(r => r.id !== ev.batterId).map(r => r.name);
+  if(others.length === 1) clause += `, scoring ${others[0]}`;
+  else if(others.length > 1) clause += `, scoring ${others.slice(0,-1).join(', ')} and ${others.slice(-1)}`;
+  return clause;
+}
+
+// Walks the at-bat cells for one half-inning in true chronological order (by
+// `seq`, not lineup order — a player can appear more than once if the team
+// batted around) and replays the same baserunning simulation recalcInning
+// uses, but keeps player names and produces one narratable event per play.
+function buildRecapHalfInning(team, inn){
+  const lineup = game.lineups[team];
+  const nameOf = {}; lineup.forEach((p,i) => nameOf[p.id] = p.name || `the No. ${i+1} hitter`);
+
+  let plays = [];
+  lineup.forEach(p => {
+    const cells = game.atbats[team][p.id]?.[inn] || [];
+    cells.forEach(cell => plays.push({ playerId: p.id, cell }));
+  });
+  plays.sort((a,b) => (a.cell.seq||0) - (b.cell.seq||0));
+
+  let bases = [null,null,null], outs = 0;
+  const events = [];
+  for(const { playerId, cell } of plays){
+    if(!cell.result) continue;
+    const def = RESULTS[cell.result];
+    const outsBefore = outs;
+    let scoredRunners = [];
+    const score = (runnerCell) => { if(runnerCell) scoredRunners.push({ id: runnerCell.playerId, name: nameOf[runnerCell.playerId] }); };
+    // bases[] holds {playerId, ...} stand-ins so score() can resolve a name
+    const runnerStub = { playerId };
+
+    if(def.group === 'hit'){
+      const b = def.bases;
+      if(b===4){ if(bases[2])score(bases[2]); if(bases[1])score(bases[1]); if(bases[0])score(bases[0]); score(runnerStub); bases=[null,null,null]; }
+      else if(b===3){ if(bases[2])score(bases[2]); if(bases[1])score(bases[1]); if(bases[0])score(bases[0]); bases=[null,null,runnerStub]; }
+      else if(b===2){ if(bases[2])score(bases[2]); if(bases[1])score(bases[1]); bases=[null,runnerStub,bases[0]]; }
+      else if(b===1){ score(bases[2]); bases=[runnerStub,bases[0],bases[1]]; }
+    } else if(def.group === 'onbase'){
+      if(cell.result==='BB' || cell.result==='HBP'){
+        if(bases[0]){ if(bases[1]){ if(bases[2]) score(bases[2]); bases[2]=bases[1]; } bases[1]=bases[0]; }
+        bases[0]=runnerStub;
+      } else if(cell.result==='FC'){
+        outs++; bases=[runnerStub, bases[1], bases[2]];
+      } else if(cell.result==='E'){
+        score(bases[2]); bases[2]=bases[1]; bases[1]=bases[0]; bases[0]=runnerStub;
+      }
+    } else if(def.group === 'out'){
+      outs++;
+      if(cell.result==='DP'){ outs++; bases[0]=null; }
+      if(cell.result==='SAC' && outs < 3){ score(bases[2]); bases[2]=bases[1]; bases[1]=bases[0]; bases[0]=null; }
+    }
+
+    events.push({ batterId: playerId, batterName: nameOf[playerId], result: cell.result, fielding: cell.fielding,
+      outsBefore, scoredRunners, isThirdOut: outs >= 3 });
+    if(outs >= 3) break;
+  }
+  const runsThisInning = events.reduce((s,e)=>s+e.scoredRunners.length,0);
+  const strandedOnBase = bases.some(Boolean);
+  return { events, runsThisInning, strandedOnBase };
+}
+
+function realizeRecapHalfInning(rng, team, teamName, inn){
+  const { events, runsThisInning, strandedOnBase } = buildRecapHalfInning(team, inn);
+  if(!events.length) return null;
+
+  const sentences = [];
+  const claims = [];
+  events.forEach(ev => {
+    let s = realizeRecapPlay(rng, ev);
+    if(ev.outsBefore === 2 && !ev.isThirdOut) s = recapPick(rng, ['With two down, ', 'Two outs in, ']) + s;
+    sentences.push(s);
+    claims.push({ team, inning: inn, batterId: ev.batterId, batterName: ev.batterName, result: ev.result,
+      fielding: ev.fielding, runsScored: ev.scoredRunners.length, scoredRunnerIds: ev.scoredRunners.map(r=>r.id) });
+  });
+
+  let text = sentences.join('. ') + '.';
+  if(runsThisInning === 0){
+    if(strandedOnBase) text += ' Inning over, runner left on.';
+  } else {
+    text = `${teamName} ${runsThisInning === 1 ? 'plates a run' : `plates ${runsThisInning} runs`} in the ${RECAP_ORDINAL[inn]}. ` + text;
+  }
+  return { text, claims };
+}
+
+function generateRecap(){
+  const rng = mulberry32(Date.now() ^ 0);
+  const innNums = [];
+  for(const team of ['away','home']){
+    Object.values(game.atbats[team]).forEach(rows => {
+      Object.keys(rows).forEach(inn => innNums.push(+inn));
+    });
+  }
+  const maxInning = innNums.length ? Math.max(...innNums) : 0;
+
+  const lines = [];
+  const claims = [];
+  for(let inn = 1; inn <= maxInning; inn++){
+    const top = realizeRecapHalfInning(rng, 'away', game.meta.away || 'Visitors', inn);
+    const bot = realizeRecapHalfInning(rng, 'home', game.meta.home || 'Home', inn);
+    if(top){ lines.push(`Top ${RECAP_ORDINAL[inn]}: ${top.text}`); claims.push(...top.claims); }
+    if(bot){ lines.push(`Bottom ${RECAP_ORDINAL[inn]}: ${bot.text}`); claims.push(...bot.claims); }
+  }
+  return { text: lines.join('\n\n'), claims };
+}
+
+function renderRecap(){
+  const content = document.getElementById('recapContent');
+  if(!game.recap){
+    content.innerHTML = `<div style="font-size:12px; color:#8a9691;">No recap generated yet. Score a few innings, then tap Generate Recap.</div>`;
+    return;
+  }
+  content.innerHTML = `<div style="white-space:pre-wrap; font-family:'IBM Plex Mono'; font-size:13px; line-height:1.6;">${game.recap.text.replace(/</g,'&lt;')}</div>`;
+}
+
 /* ---------------- tabs / wiring ---------------- */
 document.querySelectorAll('.tab').forEach(t=>{
   t.addEventListener('click', ()=>{
@@ -770,6 +971,11 @@ document.getElementById('addPlayerBtn').addEventListener('click', ()=>{
   const n = game.lineups[team].length+1;
   game.lineups[team].push({id: (team[0]+Date.now()), name:'', pos:''});
   saveGame(); renderSetup();
+});
+
+document.getElementById('generateRecapBtn').addEventListener('click', ()=>{
+  game.recap = generateRecap();
+  saveGame(); renderRecap();
 });
 
 /* ---------------- MLB API ---------------- */
@@ -866,8 +1072,9 @@ document.getElementById('mlbSyncBtn').addEventListener('click', async () => {
       game.activeInning = data.liveData.linescore.currentInning;
     }
 
+    delete game.recap; // stale now that atbats have been replaced wholesale
     saveGame();
-    renderSetup(); renderScore(); renderBox();
+    renderSetup(); renderScore(); renderBox(); renderRecap();
     alert('Sync complete!');
   } catch(e) {
     console.error(e);
@@ -880,7 +1087,7 @@ document.getElementById('mlbSyncBtn').addEventListener('click', async () => {
 (async function init(){
   game = await loadGame();
   renderHistory();
-  renderHeader(); renderSetup(); renderScore(); renderBox();
+  renderHeader(); renderSetup(); renderScore(); renderBox(); renderRecap();
 
   if('serviceWorker' in navigator){
     navigator.serviceWorker.register('sw.js').catch(()=>{});
