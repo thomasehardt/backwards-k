@@ -140,9 +140,18 @@
   </div>
 
   <div class="tabs">
+    <div class="tab" data-screen="history">Games</div>
     <div class="tab active" data-screen="setup">Lineup</div>
     <div class="tab" data-screen="score">Score</div>
     <div class="tab" data-screen="box">Box</div>
+  </div>
+
+  <div class="screen" id="history">
+    <div class="box-pad">
+      <button class="btn-save" style="width:100%; margin-bottom:20px; padding:14px; font-size:15px;" onclick="startNewGame()">+ Start New Game</button>
+      <div class="box-section-title">Saved Games</div>
+      <div id="gameHistoryList"></div>
+    </div>
   </div>
 
   <div class="screen active" id="setup">
@@ -219,6 +228,7 @@ function blankLineup(prefix){
 }
 function blankGame(){
   return {
+    id: 'game_' + Date.now(),
     meta:{ away:'Visitors', home:'Home', date: new Date().toISOString().slice(0,10), weather:'', scorer:'' },
     lineups:{ away: blankLineup('a'), home: blankLineup('h') },
     atbats:{ away:{}, home:{} }, // atbats.away[playerId][inning] = {result, scored, rbi}
@@ -230,14 +240,64 @@ function blankGame(){
 
 async function loadGame(){
   try{
-    const r = await window.storage.get('game:current', false);
-    if(r && r.value) return JSON.parse(r.value);
+    const val = localStorage.getItem('game:current');
+    if(val) {
+      let g = JSON.parse(val);
+      if(!g.id) g.id = 'game_' + Date.now();
+      return g;
+    }
   }catch(e){ /* no saved game yet */ }
   return blankGame();
 }
+
 async function saveGame(){
-  try{ await window.storage.set('game:current', JSON.stringify(game), false); }
+  try{
+    localStorage.setItem('game:current', JSON.stringify(game));
+    let history = [];
+    try{ history = JSON.parse(localStorage.getItem('game:history')||'[]'); }catch(e){}
+    const idx = history.findIndex(g => g.id === game.id);
+    if(idx >= 0) history[idx] = game;
+    else history.unshift(game);
+    localStorage.setItem('game:history', JSON.stringify(history));
+    renderHistory();
+  }
   catch(e){ console.error('save failed', e); }
+}
+
+function startNewGame(){
+  game = blankGame();
+  saveGame();
+  renderHeader(); renderSetup(); renderScore(); renderBox();
+  document.querySelector('.tab[data-screen="setup"]').click();
+}
+
+function loadFromHistory(id){
+  let history = [];
+  try{ history = JSON.parse(localStorage.getItem('game:history')||'[]'); }catch(e){}
+  const found = history.find(g => g.id === id);
+  if(found) {
+    game = found;
+    saveGame();
+    renderHeader(); renderSetup(); renderScore(); renderBox();
+    document.querySelector('.tab[data-screen="score"]').click();
+  }
+}
+
+function renderHistory(){
+  let history = [];
+  try{ history = JSON.parse(localStorage.getItem('game:history')||'[]'); }catch(e){}
+  const list = document.getElementById('gameHistoryList');
+  if(!list) return;
+  if(history.length===0){
+    list.innerHTML = '<div style="font-size:12px; color:#8a9691;">No saved games yet.</div>';
+    return;
+  }
+  list.innerHTML = history.map(g => `
+    <div style="padding:12px; border:1px solid var(--line); border-radius:8px; margin-bottom:10px; cursor:pointer; background:#fff;" onclick="loadFromHistory('${g.id}')">
+      <div style="font-family:'Oswald'; font-size:15px; color:var(--ink);">${g.meta.away} @ ${g.meta.home}</div>
+      <div style="font-family:'IBM Plex Mono'; font-size:11px; color:#6b7a75; margin-top:4px;">${g.meta.date} · Inn ${g.activeInning}</div>
+    </div>
+  `).join('');
 }
 
 /* ---------------- stats ---------------- */
@@ -539,6 +599,7 @@ document.getElementById('addPlayerBtn').addEventListener('click', ()=>{
 /* ---------------- init ---------------- */
 (async function init(){
   game = await loadGame();
+  renderHistory();
   renderHeader(); renderSetup(); renderScore(); renderBox();
 
   if('serviceWorker' in navigator){
