@@ -252,6 +252,9 @@ const RELEASE_NOTES = [
   { version: '0.3.0-alpha.6', notes: [
     "Redid the cartoon field again to actually match what a scorecard-style diamond should look like: a solid infield diamond, a separate floating arc for the outfield boundary, thin foul lines. Should look right now.",
   ]},
+  { version: '0.3.0-alpha.7', notes: [
+    "Fixed the infield dirt to be a proper frame (grass showing through the diamond's interior) instead of a solid tan dome, and added the batter's-box brackets by home plate — matching the reference image precisely this time.",
+  ]},
 ];
 
 /* ---------------- data model ---------------- */
@@ -1185,34 +1188,45 @@ function renderRecap(){
    data and choreography later without changing any of this. */
 
 // A true 45°-rotated square (dx=dy=45 on every side) so the diamond reads as
-// a proper diamond, not a skewed kite. Second base sits well below the
-// outfield arc band, leaving a visible grass gap between them (see reference
-// screenshot in conversation) — the arc is a separate floating band, not
-// connected to the infield.
-const FIELD_PT = { home:[100,190], first:[145,145], second:[100,100], third:[55,145], pitcher:[100,155] };
+// a proper diamond, not a skewed kite.
+const FIELD_PT = { home:[100,183], first:[145,138], second:[100,93], third:[55,138], pitcher:[100,147] };
 const FIELD_CIRCUIT = [FIELD_PT.home, FIELD_PT.first, FIELD_PT.second, FIELD_PT.third]; // index 0..3; base 4 wraps to home
 const FIELDER_POS = {
-  1: FIELD_PT.pitcher, 2:[100,200], 3:[132,158], 4:[120,120], 5:[68,158], 6:[80,120],
-  7:[35,45], 8:[100,15], 9:[165,45],
+  1: FIELD_PT.pitcher, 2:[100,198], 3:[132,152], 4:[118,111], 5:[68,152], 6:[82,111],
+  7:[35,42], 8:[100,15], 9:[165,42],
 };
 
 function cartoonFieldSVG(){
-  const base = (pt) => `<circle cx="${pt[0]}" cy="${pt[1]}" r="3.5" fill="#fff"/>`;
-  // Solid dirt diamond (kite shape) near home, a separate thick arc *band* for
-  // the outfield boundary (stroked, not filled — a floating band with grass
-  // showing through on both sides of it), thin foul lines connecting home to
-  // where the band begins. Matches this app's existing diamondSVG() styling,
-  // scaled up, rather than a real-world-accurate field.
+  // Diamond markers are small white diamonds (rotated squares), not circles.
+  const baseMark = (pt) => { const s=5; return `<path d="M${pt[0]},${pt[1]-s} L${pt[0]+s},${pt[1]} L${pt[0]},${pt[1]+s} L${pt[0]-s},${pt[1]} Z" fill="#fff"/>`; };
+  const home = FIELD_PT.home;
+  // Home plate icon: a pentagon pointing toward the infield (up), inside its own circle.
+  const plateIcon = `M${home[0]-7},${home[1]+7} L${home[0]+7},${home[1]+7} L${home[0]+7},${home[1]-2} L${home[0]},${home[1]-9} L${home[0]-7},${home[1]-2} Z`;
+  // Batter's box brackets flanking the plate icon.
+  const boxL = `M${home[0]-11},${home[1]-6} L${home[0]-11},${home[1]+2} L${home[0]-8},${home[1]+2} M${home[0]-11},${home[1]-6} L${home[0]-8},${home[1]-6}`;
+  const boxR = `M${home[0]+11},${home[1]-6} L${home[0]+11},${home[1]+2} L${home[0]+8},${home[1]+2} M${home[0]+11},${home[1]-6} L${home[0]+8},${home[1]-6}`;
+  // The infield "skin" is a dirt *frame*, not a solid dome — its diamond
+  // interior is cut back to grass (drawn by filling the diamond with the
+  // field's own background color on top of the dome), matching the reference
+  // exactly rather than approximating it as a solid fill with a white outline
+  // drawn over it. Plus a floating outfield boundary band well outside all of
+  // it, with grass showing through the gaps. Matches this app's own
+  // diamondSVG() styling, scaled up, rather than real-world field accuracy.
   return `
   <svg viewBox="0 0 200 205" id="cartoonField" style="width:100%; display:block; background:#3f7d4f; border-radius:10px;">
-    <line x1="${FIELD_PT.home[0]}" y1="${FIELD_PT.home[1]}" x2="20" y2="65" stroke="#fff" stroke-width="1"/>
-    <line x1="${FIELD_PT.home[0]}" y1="${FIELD_PT.home[1]}" x2="180" y2="65" stroke="#fff" stroke-width="1"/>
-    <path d="M20,65 Q100,10 180,65" fill="none" stroke="#c9a06a" stroke-width="14" stroke-linecap="round"/>
-    <circle cx="${FIELD_PT.home[0]}" cy="${FIELD_PT.home[1]}" r="15" fill="#c9a06a"/>
-    <path d="M${FIELD_PT.home} L${FIELD_PT.first} L${FIELD_PT.second} L${FIELD_PT.third} Z" fill="#c9a06a" stroke="#fff" stroke-width="1"/>
-    <ellipse cx="${FIELD_PT.pitcher[0]}" cy="${FIELD_PT.pitcher[1]}" rx="6" ry="3.5" fill="#1F4D3D" opacity="0.55"/>
+    <line x1="${home[0]}" y1="${home[1]}" x2="20" y2="60" stroke="#fff" stroke-width="1"/>
+    <line x1="${home[0]}" y1="${home[1]}" x2="180" y2="60" stroke="#fff" stroke-width="1"/>
+    <path d="M20,60 Q100,8 180,60" fill="none" stroke="#c9a06a" stroke-width="14" stroke-linecap="round"/>
+    <ellipse cx="100" cy="130" rx="72" ry="45" fill="#c9a06a"/>
+    <path d="M${FIELD_PT.home} L${FIELD_PT.first} L${FIELD_PT.second} L${FIELD_PT.third} Z" fill="#3f7d4f"/>
+    <path d="M${FIELD_PT.home} L${FIELD_PT.first} L${FIELD_PT.second} L${FIELD_PT.third} Z" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <circle cx="${home[0]}" cy="${home[1]}" r="14" fill="#c9a06a"/>
+    <circle cx="${FIELD_PT.pitcher[0]}" cy="${FIELD_PT.pitcher[1]}" r="6" fill="#c9a06a"/>
     ${Object.values(FIELDER_POS).map(([x,y])=>`<circle r="5.5" cx="${x}" cy="${y}" fill="#1F4D3D" stroke="#fff" stroke-width="1"/>`).join('')}
-    ${base(FIELD_PT.home)}${base(FIELD_PT.first)}${base(FIELD_PT.second)}${base(FIELD_PT.third)}
+    ${baseMark(FIELD_PT.first)}${baseMark(FIELD_PT.second)}${baseMark(FIELD_PT.third)}
+    <path d="${boxL}" fill="none" stroke="#fff" stroke-width="1.2"/>
+    <path d="${boxR}" fill="none" stroke="#fff" stroke-width="1.2"/>
+    <path d="${plateIcon}" fill="#fff"/>
     <circle id="cartoonBall" cx="${FIELD_PT.pitcher[0]}" cy="${FIELD_PT.pitcher[1]}" r="2.5" fill="#fff" style="display:none;"/>
     <g id="cartoonRunners"></g>
   </svg>`;
