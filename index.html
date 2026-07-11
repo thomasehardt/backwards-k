@@ -165,6 +165,16 @@
         <div class="field-group"><div class="field-label">Scorer</div><input class="field-input" id="scorer" value=""></div>
       </div>
 
+      <div class="field-group" style="margin-top:16px; border:1px solid var(--amber); border-radius:10px; padding:12px; background:rgba(232,163,61,0.1);">
+        <div class="field-label" style="color:var(--ink);">⚾ MLB API Sync</div>
+        <div style="display:flex; gap:8px; margin-bottom:8px;">
+          <input type="date" id="mlbDate" class="field-input" style="flex:1;">
+          <button id="mlbLoadBtn" class="btn-save" style="padding:8px 12px; font-size:11px; border-radius:6px;">Load Schedule</button>
+        </div>
+        <select id="mlbGameSelect" class="field-input" style="display:none; margin-bottom:8px;"></select>
+        <button id="mlbSyncBtn" class="btn-save" style="display:none; width:100%; border-radius:6px;">Sync Lineups & Plays</button>
+      </div>
+
       <div class="setup-team-toggle">
         <div class="team-chip on" data-setupteam="away" id="setupTabAway">Visitor lineup</div>
         <div class="team-chip" data-setupteam="home" id="setupTabHome">Home lineup</div>
@@ -689,6 +699,105 @@ document.getElementById('addPlayerBtn').addEventListener('click', ()=>{
   const n = game.lineups[team].length+1;
   game.lineups[team].push({id: (team[0]+Date.now()), name:'', pos:''});
   saveGame(); renderSetup();
+});
+
+/* ---------------- MLB API ---------------- */
+document.getElementById('mlbDate').value = new Date().toISOString().slice(0,10);
+document.getElementById('mlbLoadBtn').addEventListener('click', async () => {
+  const date = document.getElementById('mlbDate').value;
+  try {
+    const res = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${date}`);
+    const data = await res.json();
+    const sel = document.getElementById('mlbGameSelect');
+    sel.innerHTML = '<option value="">Select a game...</option>';
+    if(data.dates.length > 0 && data.dates[0].games) {
+      data.dates[0].games.forEach(g => {
+        sel.innerHTML += `<option value="${g.gamePk}">${g.teams.away.team.name} @ ${g.teams.home.team.name}</option>`;
+      });
+      sel.style.display = 'block';
+      document.getElementById('mlbSyncBtn').style.display = 'block';
+    } else {
+      sel.innerHTML = '<option value="">No games found.</option>';
+      sel.style.display = 'block';
+    }
+  } catch(e) { alert('Error fetching MLB schedule'); }
+});
+
+document.getElementById('mlbSyncBtn').addEventListener('click', async () => {
+  const pk = document.getElementById('mlbGameSelect').value;
+  if(!pk) return;
+  document.getElementById('mlbSyncBtn').textContent = 'Syncing...';
+  try {
+    const res = await fetch(`https://statsapi.mlb.com/api/v1.1/game/${pk}/feed/live`);
+    const data = await res.json();
+    const box = data.liveData.boxscore.teams;
+
+    game.meta.away = box.away.team.teamName || box.away.team.name;
+    game.meta.home = box.home.team.teamName || box.home.team.name;
+
+    const popTeam = (tKey, sTeam) => {
+      const t = box[tKey];
+      if(!t.battingOrder || t.battingOrder.length===0) return;
+      game.lineups[sTeam] = t.battingOrder.map(id => {
+        const p = t.players['ID'+id];
+        return { id: id.toString(), name: p.person.fullName, pos: p.position.abbreviation };
+      });
+    };
+    popTeam('away', 'away');
+    popTeam('home', 'home');
+
+    game.atbats.away = {};
+    game.atbats.home = {};
+
+    const eventMap = {
+      'Single':'1B', 'Double':'2B', 'Triple':'3B', 'Home Run':'HR',
+      'Walk':'BB', 'Hit By Pitch':'HBP', 'Intent Walk':'BB',
+      'Strikeout':'K', 'Strikeout Double Play':'DP',
+      'Groundout':'GO', 'Flyout':'FO', 'Lineout':'L', 'Pop Out':'F',
+      'Double Play':'DP', 'Grounded Into DP':'DP', 'Forceout':'FC',
+      'Field Error':'E', 'Sac Bunt':'SAC', 'Sac Fly':'SAC', 'Fielders Choice Out':'FC', 'Fielders Choice':'FC'
+    };
+
+    if(data.liveData.plays && data.liveData.plays.allPlays) {
+      data.liveData.plays.allPlays.forEach(play => {
+        if(!play.about.isComplete) return;
+        const inn = play.about.inning;
+        const team = play.about.halfInning === 'top' ? 'away' : 'home';
+        if(!play.matchup || !play.matchup.batter) return;
+        const batterId = play.matchup.batter.id.toString();
+        const event = play.result.event;
+
+        if(eventMap[event]) {
+          if(!game.atbats[team][batterId]) game.atbats[team][batterId] = {};
+          game.atbats[team][batterId][inn] = {
+            result: eventMap[event],
+            scored: (event === 'Home Run'),
+            rbi: 0,
+            fielding: '',
+            computed: true
+          };
+        }
+      });
+    }
+
+    // Attempt auto-recalc of runs/RBI for each inning
+    for(let i=1; i<=9; i++) {
+      recalcInning('away', i);
+      recalcInning('home', i);
+    }
+
+    if(data.liveData.linescore && data.liveData.linescore.currentInning) {
+      game.activeInning = data.liveData.linescore.currentInning;
+    }
+
+    saveGame();
+    renderSetup(); renderScore(); renderBox();
+    alert('Sync complete!');
+  } catch(e) {
+    console.error(e);
+    alert('Error syncing MLB game. Are lineups posted yet?');
+  }
+  document.getElementById('mlbSyncBtn').textContent = 'Sync Lineups & Plays';
 });
 
 /* ---------------- init ---------------- */
