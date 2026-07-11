@@ -1181,30 +1181,33 @@ function renderRecap(){
    "engine" layer — a richer illustrated theme can render on top of the same event
    data and choreography later without changing any of this. */
 
-// Home sits low in the viewBox, second base high, leaving a real outfield band
-// (y ~15-70) above the infield for 7/8/9 instead of crowding them right against
-// second base. Infielders (3/4/5/6) mirror symmetrically around the home-second
-// axis (x=100).
-const FIELD_PT = { home:[100,190], first:[155,135], second:[100,80], third:[45,135], pitcher:[100,155] };
+// A true 45°-rotated square (dx=dy=45 on every side) so the diamond reads as
+// a proper diamond, not a skewed kite. Second base sits well below the
+// outfield arc band, leaving a visible grass gap between them (see reference
+// screenshot in conversation) — the arc is a separate floating band, not
+// connected to the infield.
+const FIELD_PT = { home:[100,190], first:[145,145], second:[100,100], third:[55,145], pitcher:[100,155] };
 const FIELD_CIRCUIT = [FIELD_PT.home, FIELD_PT.first, FIELD_PT.second, FIELD_PT.third]; // index 0..3; base 4 wraps to home
 const FIELDER_POS = {
-  1: FIELD_PT.pitcher, 2:[100,201], 3:[140,150], 4:[122,110], 5:[60,150], 6:[78,110],
-  7:[30,60], 8:[100,20], 9:[170,60],
+  1: FIELD_PT.pitcher, 2:[100,200], 3:[132,158], 4:[120,120], 5:[68,158], 6:[80,120],
+  7:[35,45], 8:[100,15], 9:[165,45],
 };
 
 function cartoonFieldSVG(){
-  const base = (pt) => `<rect x="${pt[0]-4}" y="${pt[1]-4}" width="8" height="8" fill="#fff"/>`;
-  // Real infields are mostly grass — dirt is a track along the basepaths plus a
-  // circle at home and at the mound, not a solid filled diamond.
+  const base = (pt) => `<circle cx="${pt[0]}" cy="${pt[1]}" r="3.5" fill="#fff"/>`;
+  // Solid dirt diamond (kite shape) near home, a separate thick arc *band* for
+  // the outfield boundary (stroked, not filled — a floating band with grass
+  // showing through on both sides of it), thin foul lines connecting home to
+  // where the band begins. Matches this app's existing diamondSVG() styling,
+  // scaled up, rather than a real-world-accurate field.
   return `
   <svg viewBox="0 0 200 205" id="cartoonField" style="width:100%; display:block; background:#3f7d4f; border-radius:10px;">
-    <path d="M14,68 Q100,2 186,68" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="1.5"/>
-    <line x1="${FIELD_PT.home[0]}" y1="${FIELD_PT.home[1]}" x2="190" y2="10" stroke="#fff" stroke-width="1"/>
-    <line x1="${FIELD_PT.home[0]}" y1="${FIELD_PT.home[1]}" x2="10" y2="10" stroke="#fff" stroke-width="1"/>
-    <circle cx="${FIELD_PT.home[0]}" cy="${FIELD_PT.home[1]}" r="30" fill="#c9a06a"/>
-    <path d="M${FIELD_PT.home} L${FIELD_PT.first} L${FIELD_PT.second} L${FIELD_PT.third} Z" fill="none" stroke="#c9a06a" stroke-width="13" stroke-linejoin="round"/>
-    <circle cx="${FIELD_PT.pitcher[0]}" cy="${FIELD_PT.pitcher[1]}" r="11" fill="#c9a06a"/>
-    <circle cx="${FIELD_PT.pitcher[0]}" cy="${FIELD_PT.pitcher[1]}" r="3" fill="#fff" opacity="0.85"/>
+    <line x1="${FIELD_PT.home[0]}" y1="${FIELD_PT.home[1]}" x2="20" y2="65" stroke="#fff" stroke-width="1"/>
+    <line x1="${FIELD_PT.home[0]}" y1="${FIELD_PT.home[1]}" x2="180" y2="65" stroke="#fff" stroke-width="1"/>
+    <path d="M20,65 Q100,10 180,65" fill="none" stroke="#c9a06a" stroke-width="14" stroke-linecap="round"/>
+    <circle cx="${FIELD_PT.home[0]}" cy="${FIELD_PT.home[1]}" r="15" fill="#c9a06a"/>
+    <path d="M${FIELD_PT.home} L${FIELD_PT.first} L${FIELD_PT.second} L${FIELD_PT.third} Z" fill="#c9a06a" stroke="#fff" stroke-width="1"/>
+    <ellipse cx="${FIELD_PT.pitcher[0]}" cy="${FIELD_PT.pitcher[1]}" rx="6" ry="3.5" fill="#1F4D3D" opacity="0.55"/>
     ${Object.values(FIELDER_POS).map(([x,y])=>`<circle r="5.5" cx="${x}" cy="${y}" fill="#1F4D3D" stroke="#fff" stroke-width="1"/>`).join('')}
     ${base(FIELD_PT.home)}${base(FIELD_PT.first)}${base(FIELD_PT.second)}${base(FIELD_PT.third)}
     <circle id="cartoonBall" cx="${FIELD_PT.pitcher[0]}" cy="${FIELD_PT.pitcher[1]}" r="2.5" fill="#fff" style="display:none;"/>
