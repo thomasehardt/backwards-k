@@ -237,6 +237,9 @@ const RELEASE_NOTES = [
   { version: '0.3.0-alpha.2', notes: [
     "Fixed: this screen now also shows on a brand-new install (as a welcome, not just \"what's new\" after an upgrade) — first installs were silently skipping it, which meant the Recap tab and animated cartoon replay were easy to miss entirely.",
   ]},
+  { version: '0.3.0-alpha.3', notes: [
+    "Fixed a build issue where alpha.1 and alpha.2 were indistinguishable to Android/F-Droid's update mechanism — if you were stuck on alpha.1 or alpha.2 with no update showing up, this is why, and it's now fixed going forward.",
+  ]},
 ];
 
 /* ---------------- data model ---------------- */
