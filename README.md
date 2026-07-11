@@ -1,41 +1,84 @@
-# Backwards K — from prototype to app store
+# Backwards K
 
-## What's in this prototype
-- `index.html` — the whole app (setup, live scoring, box score). Game state saves automatically as you go.
-- `manifest.json` + `sw.js` — make it installable to a home screen and usable offline, once hosted on a real domain.
+A mobile-first digital scorecard for keeping score at a baseball game — built to
+replace the paper scorecard, not simplify away from it. It follows the same
+notation experienced scorers already use (see [`SCORING.md`](SCORING.md)),
+including the notation this project is named after: a backwards K for a called
+third strike.
 
-Try it in this chat first — tap through Lineup → Score → Box. Data persists across reloads inside this preview, but that storage is specific to this artifact, not your real deployment.
+## Why
 
-## Step 1 — Host it as a real PWA (this week)
-Push these three files to any static host:
-- **Vercel** or **Netlify**: drag-and-drop deploy, free tier, gives you an installable HTTPS URL in minutes
-- **GitHub Pages**: free, good if you want the code in a public repo
+Paper scorecards are expressive — fielder sequences, force outs, sacrifice flies,
+the little scored-run circle — but they don't total themselves, don't sync across
+a phone and a scorebook, and don't survive a rained-out doubleheader. Backwards K
+keeps the paper card's vocabulary and adds automatic box scores, saved game
+history, and (optionally) real MLB data.
 
-Once it's live at a real HTTPS URL, replace the in-artifact storage calls with a real backend (see Step 2) and the "Add to Home Screen" flow will actually install it like an app on Android and iOS.
+## Features
 
-## Step 2 — Add real persistence
-The prototype's storage won't carry over to a real deployment. Swap it for:
-- **Simplest**: `localStorage` (works fine once it's your own hosted site — the restriction only applies inside Claude's artifact preview)
-- **If you want scores to sync across devices**: a small backend — Supabase or Firebase both have generous free tiers and handle auth + a database with very little setup
+- **Live scoring** — tap through a lineup, record each plate appearance with the
+  same result vocabulary as a paper scorecard (hits, walks, the full range of
+  outs), and see the diamond fill in as runners advance.
+- **Fielder detail** — record assist sequences (6-3, 4-6-3, ...) the way a real
+  scorecard does, not just broad out categories.
+- **Automatic runs/RBI** — a baserunning simulation derives who scored and who
+  drove them in from the sequence of plays in an inning, instead of requiring
+  manual entry for every runner.
+- **Box score** — runs, hits, errors, and per-batter lines computed automatically
+  from the at-bat data.
+- **Game history** — multiple games saved locally, browsable from a Games tab.
+- **MLB Stats API sync** — pull a real game's lineups and play-by-play from
+  [statsapi.mlb.com](https://statsapi.mlb.com) into the scorecard, useful for
+  testing against real games or just following along with one.
+- **Installable / offline-capable** — a PWA manifest and service worker, plus a
+  Capacitor scaffold for wrapping it as a native Android app.
 
-## Step 3 — Wrap it for the App Store / Play Store
-Use **Capacitor** (by the Ionic team) — it wraps your existing web app in a real native shell, so you submit to both stores without rewriting the UI:
+## Project layout
 
-```bash
-npm install @capacitor/core @capacitor/cli
-npx cap init "Backwards K" "com.yourname.backwardsk"
-npx cap add ios
-npx cap add android
-npx cap copy
-npx cap open ios      # opens Xcode
-npx cap open android  # opens Android Studio
+```
+index.html      the entire app — markup, styles, and logic in one file
+manifest.json   PWA manifest
+sw.js           offline-caching service worker
+SCORING.md      the paper scoring notation this app's picker is based on
+capacitor.config.json, package.json, www/   Capacitor native-app scaffold
+icons/, assets/ app icons
 ```
 
-From there it's standard app-store submission: an Apple Developer account ($99/yr) for iOS, a Google Play Developer account ($25 one-time) for Android. You'll want real app icons (the manifest above expects 192px and 512px PNGs) and a couple of screenshots.
+There's no build step for the web app. Open `index.html` directly, or serve the
+folder with any static file server.
 
-## What this v1 prototype simplifies (worth deciding on next)
-- **RBI and runs are entered manually** rather than derived from a full baserunner simulation (tracking force plays, runners advancing on a single, etc.). Building the full engine is very doable but is its own chunk of work — worth doing once the core flow feels right.
-- **No fielding/position picker** for outs (6-3, 4-3, etc.) yet — currently just K / GO / FO / DP / SAC.
-- **Errors and left-on-base** aren't auto-computed in the box score yet.
+## Status
 
-Happy to build any of these out next, or start on the Capacitor wrapping once you've tested the core flow.
+Working prototype. Game state persists in the browser via `localStorage`. Not
+yet deployed to a real domain or published to an app store.
+
+### Known gaps
+
+- **Left-on-base** isn't computed in the box score yet.
+- Icons referenced by `manifest.json` exist under `icons/`, but the install
+  experience hasn't been tested on a real device yet.
+
+## Running it as a native app
+
+The Capacitor scaffold (`capacitor.config.json`, `package.json`, `www/`) wraps
+the web app for Android. The generated `android/` project itself isn't checked
+in (see `.gitignore`) — regenerate it with:
+
+```bash
+npm install
+npx cap add android
+npx cap sync android
+npx cap open android
+```
+
+From there it's a standard Android Studio build. An iOS build would follow the
+same pattern (`npx cap add ios`) but hasn't been set up yet.
+
+## Roadmap
+
+- Left-on-base in the box score.
+- Real hosting + a persistence story beyond `localStorage` if cross-device sync
+  matters.
+- iOS build via Capacitor.
+- Non-LLM play-by-play recap generation from a finished game's at-bat sequence
+  (unblocked now that at-bats carry a true chronological order).
