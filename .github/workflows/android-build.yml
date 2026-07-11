@@ -28,15 +28,25 @@ jobs:
             TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
           fi
           VERSION_NAME="${TAG#v}"
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_NAME"
+          # Strip any pre-release suffix (e.g. "0.3.0-alpha.1" -> "0.3.0") before
+          # parsing — versionCode only needs the numeric MAJOR.MINOR.PATCH, but
+          # VERSION_NAME (used for display and the release tag) keeps the suffix.
+          NUMERIC_PART="${VERSION_NAME%%-*}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$NUMERIC_PART"
           # Android requires versionCode to be a plain increasing integer, but
           # it can still be a deterministic function of the semver rather than
           # an arbitrary counter — this encodes MAJOR.MINOR.PATCH directly, so
-          # the same tag always produces the same versionCode.
+          # the same tag always produces the same versionCode. Pre-release tags
+          # of the same MAJOR.MINOR.PATCH would collide with their eventual
+          # stable release's versionCode; that's fine here since an alpha is
+          # expected to be superseded by the real release at that version.
           VERSION_CODE=$(( MAJOR * 1000000 + MINOR * 1000 + PATCH ))
+          PRERELEASE_FLAG="--latest"
+          if [[ "$VERSION_NAME" == *-* ]]; then PRERELEASE_FLAG="--prerelease"; fi
           echo "name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
-          echo "Building version $VERSION_NAME (versionCode $VERSION_CODE)"
+          echo "prerelease_flag=$PRERELEASE_FLAG" >> "$GITHUB_OUTPUT"
+          echo "Building version $VERSION_NAME (versionCode $VERSION_CODE, $PRERELEASE_FLAG)"
 
       - uses: actions/setup-java@v4
         with:
@@ -139,7 +149,7 @@ jobs:
               "backwards-k-${RELEASE_TAG}.apk" \
               --title "$RELEASE_TAG" \
               --generate-notes \
-              --latest
+              ${{ steps.version.outputs.prerelease_flag }}
           fi
 
       - name: Commit published repo + latest APK back to the repository
