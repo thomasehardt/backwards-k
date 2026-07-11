@@ -86,6 +86,16 @@ Two ways to get it:
   real F-Droid-style installs and update notifications without it being in
   the official F-Droid catalog.
 
+Tagged releases are deliberate, not automatic — a `git push --tags` away.
+For the bleeding edge between releases, a
+[nightly workflow](.github/workflows/android-nightly.yml) builds from the
+latest `main` once a day (skipped if nothing changed) and publishes a rolling
+pre-release APK — **not** through the F-Droid repo, so it can't destabilize
+that trust channel. Grab it from the
+[nightly release](https://github.com/thomasehardt/backwards-k/releases/tag/nightly)
+and sideload manually; it shares the same signing key as stable releases, so
+installing over (or under) a stable version upgrades in place either way.
+
 To build it yourself:
 
 ```bash

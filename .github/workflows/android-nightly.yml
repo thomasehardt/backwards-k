@@ -1,0 +1,127 @@
+name: Nightly Android build
+
+# A rolling pre-release, distinct from the deliberate v*.*.* release flow in
+# android-build.yml. Builds from the latest main once a day (or on demand),
+# signed with the same keystore as stable releases (same applicationId, so a
+# nightly install upgrades cleanly to/from a stable release later) — but
+# published only as a GitHub pre-release, not through the F-Droid repo, so it
+# never touches the "stable" trust channel.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 8 * * *' # ~daily; skipped below if nothing has changed since the last nightly
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Skip if nothing has changed since the last nightly
+        id: check
+        run: |
+          git fetch origin refs/tags/nightly:refs/tags/nightly 2>/dev/null || true
+          if git rev-parse -q --verify refs/tags/nightly >/dev/null && [ "$(git rev-parse HEAD)" = "$(git rev-parse refs/tags/nightly)" ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "HEAD is unchanged since the last nightly tag — skipping build"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Determine nightly version
+        if: steps.check.outputs.build == 'true'
+        id: version
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          VERSION_NAME="0.0.0-nightly.$(date -u +%Y%m%d).${SHORT_SHA}"
+          VERSION_CODE=$(date -u +%s)
+          echo "name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "Building nightly $VERSION_NAME (versionCode $VERSION_CODE)"
+
+      - uses: actions/setup-java@v4
+        if: steps.check.outputs.build == 'true'
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+        if: steps.check.outputs.build == 'true'
+      - if: steps.check.outputs.build == 'true'
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.build == 'true'
+        with:
+          node-version: '22'
+
+      - name: Decode app signing keystore
+        if: steps.check.outputs.build == 'true'
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > mobile/android/backwardsk-release.keystore
+
+      - name: Write app keystore.properties
+        if: steps.check.outputs.build == 'true'
+        run: |
+          cat > mobile/android/keystore.properties <<EOF
+          storeFile=backwardsk-release.keystore
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+
+      - name: Sync web assets into the Capacitor project
+        if: steps.check.outputs.build == 'true'
+        run: bash mobile/sync-web-assets.sh
+
+      - name: Install Capacitor deps and sync Android project
+        if: steps.check.outputs.build == 'true'
+        working-directory: mobile
+        run: |
+          npm ci
+          npx cap sync android
+
+      - name: Build signed release APK
+        if: steps.check.outputs.build == 'true'
+        working-directory: mobile/android
+        run: |
+          ./gradlew assembleRelease \
+            -PappVersionCode="${{ steps.version.outputs.code }}" \
+            -PappVersionName="${{ steps.version.outputs.name }}"
+
+      - name: Verify the APK is actually signed correctly
+        if: steps.check.outputs.build == 'true'
+        run: |
+          APK=mobile/android/app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK"
+
+      - name: Move the rolling nightly tag to this commit
+        if: steps.check.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git tag -f nightly
+          git push origin nightly --force
+
+      - name: Create or update the nightly pre-release
+        if: steps.check.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Fixed filename (not date/sha-stamped) so --clobber actually replaces
+          # the asset each run instead of accumulating a new one every night.
+          cp mobile/android/app/build/outputs/apk/release/app-release.apk backwards-k-nightly.apk
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release upload nightly backwards-k-nightly.apk --clobber
+            gh release edit nightly --title "Nightly ${{ steps.version.outputs.name }}" \
+              --notes "Automated build from main @ $(git rev-parse --short HEAD). Not distributed via the F-Droid repo — download and sideload directly. May be unstable."
+          else
+            gh release create nightly backwards-k-nightly.apk \
+              --title "Nightly ${{ steps.version.outputs.name }}" \
+              --notes "Automated build from main @ $(git rev-parse --short HEAD). Not distributed via the F-Droid repo — download and sideload directly. May be unstable." \
+              --prerelease
+          fi
