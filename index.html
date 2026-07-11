@@ -255,6 +255,10 @@ const RELEASE_NOTES = [
   { version: '0.3.0-alpha.7', notes: [
     "Fixed the infield dirt to be a proper frame (grass showing through the diamond's interior) instead of a solid tan dome, and added the batter's-box brackets by home plate — matching the reference image precisely this time.",
   ]},
+  { version: '0.3.0-alpha.8', notes: [
+    "Rebuilt the field from geometric formulas instead of hand-picked coordinates — the foul lines now actually pass through first and third base (they didn't before, however close it may have looked).",
+    "Added an automated geometry test for the field so this class of bug gets caught before it ships, not after.",
+  ]},
 ];
 
 /* ---------------- data model ---------------- */
