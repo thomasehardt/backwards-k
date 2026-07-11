@@ -1,0 +1,17 @@
+node_modules/
+www/
+
+# Android / Gradle
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
+android/*.iml
+android/app/*.iml
+android/.idea/
+
+# release signing (never commit keystores or secrets)
+android/*.keystore
+android/*.jks
+keystore.properties

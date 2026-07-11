@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Backwards K</string>
+    <string name="title_activity_main">Backwards K</string>
+    <string name="package_name">com.backwardsk.app</string>
+    <string name="custom_url_scheme">com.backwardsk.app</string>
+</resources>

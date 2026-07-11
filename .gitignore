@@ -7,22 +7,6 @@ Thumbs.db
 .idea/
 *.swp
 
-# Node (once tooling/Capacitor is added)
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-package-lock.json
-
-# Capacitor native projects (generated — regenerate with `npx cap add`)
-ios/
-android/
-
-# Build output
-dist/
-build/
-.cache/
-
 # Env / secrets
 .env
 .env.local
@@ -30,3 +14,8 @@ build/
 
 # Logs
 *.log
+
+# mobile/ (Capacitor + Android project) has its own .gitignore for
+# node_modules/, derived www/, Gradle build output, and keystores — the
+# Android project itself IS checked in (unlike a typical `npx cap add`
+# setup) so CI can build it reproducibly.
