@@ -208,6 +208,8 @@ const RESULTS = {
   'FO': {group:'out', ab:true, hit:false, out:true, label:'FO'},
   'DP': {group:'out', ab:true, hit:false, out:true, label:'DP'},
   'SAC':{group:'out', ab:false, hit:false, out:true, label:'SAC'},
+  'L':  {group:'out', ab:true, hit:false, out:true, label:'L'},
+  'F':  {group:'out', ab:true, hit:false, out:true, label:'F'},
 };
 const INNINGS = 9;
 let game = null;
@@ -315,12 +317,62 @@ function playerStats(team, playerId){
   return {AB,R,H,RBI};
 }
 function teamTotals(team){
-  let AB=0,R=0,H=0,RBI=0;
+  let AB=0,R=0,H=0,RBI=0,E=0;
   game.lineups[team].forEach(p=>{
     const s = playerStats(team,p.id);
     AB+=s.AB; R+=s.R; H+=s.H; RBI+=s.RBI;
+    Object.values(game.atbats[team][p.id]||{}).forEach(c => {
+      if(c && c.result === 'E') E++;
+    });
   });
-  return {AB,R,H,RBI};
+  return {AB,R,H,RBI,E};
+}
+
+function recalcInning(team, inn){
+  let bases = [null, null, null];
+  let outs = 0;
+  let lineup = game.lineups[team];
+
+  lineup.forEach(p => {
+    let cell = game.atbats[team][p.id]?.[inn];
+    if(cell && cell.computed) { cell.scored = false; cell.rbi = 0; }
+  });
+
+  lineup.forEach(p => {
+    if(outs >= 3) return;
+    let cell = game.atbats[team][p.id]?.[inn];
+    if(!cell || !cell.result) return;
+
+    const def = RESULTS[cell.result];
+    let playRbi = 0;
+    const score = (rId) => {
+      let r = game.atbats[team][rId]?.[inn];
+      if(r && !r.scored) { r.scored = true; r.computed = true; }
+      playRbi++;
+    };
+
+    if(def.group === 'hit') {
+      let b = def.bases;
+      if(b===4){ if(bases[2])score(bases[2]); if(bases[1])score(bases[1]); if(bases[0])score(bases[0]); score(p.id); bases=[null,null,null]; }
+      else if(b===3){ if(bases[2])score(bases[2]); if(bases[1])score(bases[1]); if(bases[0])score(bases[0]); bases=[null,null,p.id]; }
+      else if(b===2){ if(bases[2])score(bases[2]); if(bases[1])score(bases[1]); bases[2]=bases[0]; bases[1]=p.id; bases[0]=null; }
+      else if(b===1){ if(bases[2])score(bases[2]); bases[2]=bases[1]; bases[1]=bases[0]; bases[0]=p.id; }
+    } else if(def.group === 'onbase') {
+      if(cell.result==='BB' || cell.result==='HBP') {
+        if(bases[0]){ if(bases[1]){ if(bases[2]) score(bases[2]); bases[2]=bases[1]; } bases[1]=bases[0]; }
+        bases[0]=p.id;
+      } else {
+        if(bases[2]) score(bases[2]); bases[2]=bases[1]; bases[1]=bases[0]; bases[0]=p.id;
+      }
+    } else if(def.group === 'out') {
+      outs++;
+      if(cell.result==='DP') outs++;
+      if(cell.result==='SAC' && outs < 3) {
+        if(bases[2]) score(bases[2]); bases[2]=bases[1]; bases[1]=bases[0]; bases[0]=null;
+      }
+    }
+    if(cell.computed === undefined || cell.computed) { cell.rbi = playRbi; cell.computed = true; }
+  });
 }
 
 /* ---------------- diamond svg ---------------- */
@@ -336,8 +388,9 @@ function diamondSVG(cell){
       basePaths = `M${pts[0]} ` + pts.slice(1, def.bases+1).map(p=>`L${p}`).join(' ');
     } else if(def.group==='onbase'){
       basePaths = `M${home} L${first}`;
+      if(cell.fielding && (def.label==='E' || def.label==='FC')) resultText = `${def.label}${cell.fielding.replace(/-/g,'')}`;
     } else if(def.group==='out'){
-      outLetter = def.label;
+      outLetter = cell.fielding || def.label;
     }
   }
   if(cell && cell.scored) scoredClass='scored';
@@ -474,6 +527,8 @@ function openSheet(team, playerId){
   let sel = existing.result;
   let scored = !!existing.scored;
   let rbi = existing.rbi || 0;
+  let fielding = existing.fielding || '';
+  let computed = existing.computed !== false;
 
   const backdrop = document.createElement('div');
   backdrop.className = 'sheet-backdrop';
@@ -493,7 +548,16 @@ function openSheet(team, playerId){
       </div>
       <div class="group-label">Out</div>
       <div class="chip-row" data-group="out">
-        ${['K','KC','GO','FO','DP','SAC'].map(r=>`<div class="chip out ${sel===r?'sel':''}" data-r="${r}">${r==='KC'?'K̶':r}</div>`).join('')}
+        ${['K','KC','GO','FO','DP','SAC','L','F'].map(r=>`<div class="chip out ${sel===r?'sel':''}" data-r="${r}">${r==='KC'?'K̶':r}</div>`).join('')}
+      </div>
+
+      <div class="group-label" id="fieldingLabel" style="display:none; margin-top:14px;">Fielders (e.g. 6-3)</div>
+      <div class="chip-row" id="fieldingChips" style="display:none;">
+        <input type="text" id="fieldingInput" value="${fielding}" placeholder="Tap positions: 1 2 3..." style="width:100%; border:1.4px solid var(--ink); border-radius:8px; padding:8px 10px; font-family:'IBM Plex Mono'; font-size:13px; margin-bottom:8px;" readonly>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+          ${[1,2,3,4,5,6,7,8,9].map(n=>`<div class="chip fielder-chip" style="padding:6px 12px;" data-pos="${n}">${n}</div>`).join('')}
+          <div class="chip fielder-clear" style="padding:6px 12px;">Del</div>
+        </div>
       </div>
 
       <div class="stepper-row">
@@ -519,29 +583,56 @@ function openSheet(team, playerId){
 
   backdrop.addEventListener('click',(e)=>{ if(e.target===backdrop) backdrop.remove(); });
 
-  backdrop.querySelectorAll('.chip').forEach(chip=>{
+  const updateFieldingVis = () => {
+    const fLabel = backdrop.querySelector('#fieldingLabel');
+    const fChips = backdrop.querySelector('#fieldingChips');
+    if(['GO','FO','DP','FC','E','L','F'].includes(sel)){
+      fLabel.style.display = 'block'; fChips.style.display = 'flex';
+    } else {
+      fLabel.style.display = 'none'; fChips.style.display = 'none';
+      backdrop.querySelector('#fieldingInput').value = '';
+    }
+  };
+  updateFieldingVis();
+
+  backdrop.querySelectorAll('.chip[data-r]').forEach(chip=>{
     chip.addEventListener('click', ()=>{
-      backdrop.querySelectorAll('.chip').forEach(c=>c.classList.remove('sel'));
+      backdrop.querySelectorAll('.chip[data-r]').forEach(c=>c.classList.remove('sel'));
       chip.classList.add('sel');
       sel = chip.dataset.r;
+      updateFieldingVis();
     });
   });
+
+  const fInput = backdrop.querySelector('#fieldingInput');
+  backdrop.querySelectorAll('.fielder-chip').forEach(btn => {
+    btn.addEventListener('click', () => {
+      fInput.value = fInput.value ? fInput.value + '-' + btn.dataset.pos : btn.dataset.pos;
+    });
+  });
+  backdrop.querySelector('.fielder-clear').addEventListener('click', () => { fInput.value = ''; });
+
   backdrop.querySelectorAll('[data-step]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
+      computed = false;
       rbi = Math.max(0, Math.min(4, rbi + (+btn.dataset.step)));
       backdrop.querySelector('#rbiVal').textContent = rbi;
     });
   });
-  backdrop.querySelector('#scoredCheck').addEventListener('change', (e)=>{ scored = e.target.checked; });
+  backdrop.querySelector('#scoredCheck').addEventListener('change', (e)=>{
+    computed = false; scored = e.target.checked;
+  });
 
   backdrop.querySelector('#clearBtn').addEventListener('click', ()=>{
     if(!game.atbats[team][playerId]) game.atbats[team][playerId]={};
     delete game.atbats[team][playerId][game.activeInning];
+    recalcInning(team, game.activeInning);
     saveGame(); renderScore(); renderBox(); backdrop.remove();
   });
   backdrop.querySelector('#saveBtn').addEventListener('click', ()=>{
     if(!game.atbats[team][playerId]) game.atbats[team][playerId]={};
-    game.atbats[team][playerId][game.activeInning] = { result: sel, scored: sel==='HR' ? true : scored, rbi };
+    game.atbats[team][playerId][game.activeInning] = { result: sel, scored: sel==='HR' ? true : scored, rbi, fielding: fInput.value, computed };
+    if(computed) recalcInning(team, game.activeInning);
     saveGame(); renderScore(); renderBox(); backdrop.remove();
   });
 }
@@ -550,16 +641,20 @@ function openSheet(team, playerId){
 function renderBox(){
   const box = document.getElementById('boxContent');
   const away = teamTotals('away'), home = teamTotals('home');
+  const awayErrors = home.E;
+  const homeErrors = away.E;
+
   const rowsFor = (team)=> game.lineups[team].map(p=>{
     const s = playerStats(team,p.id);
     return `<tr><td>${p.name||'—'}</td><td>${s.AB}</td><td>${s.R}</td><td>${s.H}</td><td>${s.RBI}</td></tr>`;
   }).join('');
 
   box.innerHTML = `
-    <div class="runline">
-      <div class="box-mini"><span class="n">${away.R}-${home.R}</span><span class="l">${game.meta.away} - ${game.meta.home}</span></div>
-      <div class="box-mini"><span class="n">${away.H+home.H}</span><span class="l">Total hits</span></div>
-    </div>
+    <table class="box" style="margin-bottom:16px;">
+      <tr><th></th><th>R</th><th>H</th><th>E</th></tr>
+      <tr><td style="font-weight:600;">${game.meta.away||'Away'}</td><td>${away.R}</td><td>${away.H}</td><td>${awayErrors}</td></tr>
+      <tr><td style="font-weight:600;">${game.meta.home||'Home'}</td><td>${home.R}</td><td>${home.H}</td><td>${homeErrors}</td></tr>
+    </table>
     <div class="box-section-title">${game.meta.away||'Visitor'} batting</div>
     <table class="box"><tr><th>Batter</th><th>AB</th><th>R</th><th>H</th><th>RBI</th></tr>${rowsFor('away')}</table>
     <div class="box-section-title">${game.meta.home||'Home'} batting</div>
