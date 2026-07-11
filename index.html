@@ -123,6 +123,8 @@
   .runline .box-mini .n{ font-size:16px; font-weight:600; color:var(--ink); display:block; font-family:'IBM Plex Mono';}
   .runline .box-mini .l{ font-size:9px; color:#8a9691; text-transform:uppercase; letter-spacing:.05em; }
   .install-note{ font-family:'IBM Plex Mono'; font-size:10.5px; color:#8a9691; text-align:center; padding:10px 18px 0; }
+  @keyframes cartoonPulse{ 0%{ transform:scale(1); } 35%{ transform:scale(1.35); color:var(--amber); } 100%{ transform:scale(1); } }
+  .cartoon-pulse{ display:inline-block; animation:cartoonPulse 0.5s ease; }
 </style>
 </head>
 <body>
@@ -1188,13 +1190,17 @@ const FIELDER_POS = {
 
 function cartoonFieldSVG(){
   const base = (pt) => `<rect x="${pt[0]-4}" y="${pt[1]-4}" width="8" height="8" fill="#fff"/>`;
+  // Real infields are mostly grass — dirt is a track along the basepaths plus a
+  // circle at home and at the mound, not a solid filled diamond.
   return `
   <svg viewBox="0 0 200 205" id="cartoonField" style="width:100%; display:block; background:#3f7d4f; border-radius:10px;">
     <path d="M14,68 Q100,2 186,68" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="1.5"/>
     <line x1="${FIELD_PT.home[0]}" y1="${FIELD_PT.home[1]}" x2="190" y2="10" stroke="#fff" stroke-width="1"/>
     <line x1="${FIELD_PT.home[0]}" y1="${FIELD_PT.home[1]}" x2="10" y2="10" stroke="#fff" stroke-width="1"/>
-    <path d="M${FIELD_PT.home} L${FIELD_PT.first} L${FIELD_PT.second} L${FIELD_PT.third} Z" fill="#c9a06a" stroke="#fff" stroke-width="1"/>
-    <circle cx="${FIELD_PT.pitcher[0]}" cy="${FIELD_PT.pitcher[1]}" r="7" fill="#c9a06a"/>
+    <circle cx="${FIELD_PT.home[0]}" cy="${FIELD_PT.home[1]}" r="30" fill="#c9a06a"/>
+    <path d="M${FIELD_PT.home} L${FIELD_PT.first} L${FIELD_PT.second} L${FIELD_PT.third} Z" fill="none" stroke="#c9a06a" stroke-width="13" stroke-linejoin="round"/>
+    <circle cx="${FIELD_PT.pitcher[0]}" cy="${FIELD_PT.pitcher[1]}" r="11" fill="#c9a06a"/>
+    <circle cx="${FIELD_PT.pitcher[0]}" cy="${FIELD_PT.pitcher[1]}" r="3" fill="#fff" opacity="0.85"/>
     ${Object.values(FIELDER_POS).map(([x,y])=>`<circle r="5.5" cx="${x}" cy="${y}" fill="#1F4D3D" stroke="#fff" stroke-width="1"/>`).join('')}
     ${base(FIELD_PT.home)}${base(FIELD_PT.first)}${base(FIELD_PT.second)}${base(FIELD_PT.third)}
     <circle id="cartoonBall" cx="${FIELD_PT.pitcher[0]}" cy="${FIELD_PT.pitcher[1]}" r="2.5" fill="#fff" style="display:none;"/>
@@ -1261,15 +1267,63 @@ function buildFullPlayList(){
   const maxInning = innNums.length ? Math.max(...innNums) : 0;
   const rng = mulberry32(Date.now() ^ 0);
   const list = [];
+  let awayScore = 0, homeScore = 0;
   for(let inn=1; inn<=maxInning; inn++){
     for(const team of ['away','home']){
       const { events } = buildRecapHalfInning(team, inn);
       // caption is computed once here (not re-rolled on every snap/preview) so
-      // scrubbing back and forth always shows the same wording for a given play
-      events.forEach(ev => list.push({ team, inning: inn, ev, caption: realizeRecapPlay(rng, ev) }));
+      // scrubbing back and forth always shows the same wording for a given play.
+      // Score is tracked as "before this play" — the after-value is always
+      // derivable (before + this play's own runs) so it doesn't need storing.
+      events.forEach(ev => {
+        list.push({ team, inning: inn, ev, caption: realizeRecapPlay(rng, ev), awayScoreBefore: awayScore, homeScoreBefore: homeScore });
+        const runs = ev.scoredRunners.length;
+        if(team === 'away') awayScore += runs; else homeScore += runs;
+      });
     }
   }
   return list;
+}
+
+// {away, home, outs, team, inning} snapshots for the scoreboard — "before" is
+// what a jump/preview should show; "after" is what a play resolves to, shown
+// with flair once the animation finishes.
+function scoreboardBefore(entry){
+  return { away: entry.awayScoreBefore, home: entry.homeScoreBefore, outs: entry.ev.outsBefore, team: entry.team, inning: entry.inning };
+}
+function scoreboardAfter(entry){
+  const runs = entry.ev.scoredRunners.length;
+  const def = RESULTS[entry.ev.result];
+  const outsThisPlay = def.group === 'out' ? (entry.ev.result === 'DP' ? 2 : 1) : 0;
+  return {
+    away: entry.awayScoreBefore + (entry.team === 'away' ? runs : 0),
+    home: entry.homeScoreBefore + (entry.team === 'home' ? runs : 0),
+    outs: entry.ev.outsBefore + outsThisPlay,
+    team: entry.team, inning: entry.inning,
+  };
+}
+
+function pulseElement(el){
+  if(!el) return;
+  el.classList.remove('cartoon-pulse');
+  void el.offsetWidth; // force reflow so the animation restarts even if already mid-pulse
+  el.classList.add('cartoon-pulse');
+}
+
+function updateScoreboard(state, animate){
+  const awayEl = document.getElementById('cartoonAwayScore');
+  const homeEl = document.getElementById('cartoonHomeScore');
+  const inningEl = document.getElementById('cartoonInningMini');
+  const outsEl = document.getElementById('cartoonOutsDisplay');
+  if(awayEl && awayEl.textContent !== String(state.away)){ awayEl.textContent = state.away; if(animate) pulseElement(awayEl); }
+  if(homeEl && homeEl.textContent !== String(state.home)){ homeEl.textContent = state.home; if(animate) pulseElement(homeEl); }
+  const inningText = `${state.team==='away'?'▲':'▼'}${state.inning}`;
+  if(inningEl && inningEl.textContent !== inningText){ inningEl.textContent = inningText; if(animate) pulseElement(inningEl); }
+  if(outsEl){
+    const outs = Math.min(state.outs, 3);
+    const dots = '●'.repeat(outs) + '○'.repeat(3 - outs);
+    if(outsEl.textContent !== dots){ outsEl.textContent = dots; if(animate) pulseElement(outsEl); }
+  }
 }
 
 function buildHalfInningList(playList){
@@ -1324,7 +1378,8 @@ function snapToIndex(index){
   if(!playList.length) return;
   index = Math.max(0, Math.min(index, playList.length - 1));
   CartoonPlayer.currentIndex = index;
-  const { ev, team, inning, caption } = playList[index];
+  const entry = playList[index];
+  const { ev, team, inning, caption } = entry;
 
   resetCartoonField();
   ev.basesBefore.forEach((name, i) => {
@@ -1343,9 +1398,9 @@ function snapToIndex(index){
   const select = document.getElementById('cartoonHalfSelect');
   if(select && half){ const idx = CartoonPlayer.halfInnings.indexOf(half); if(idx>=0) select.value = String(idx); }
 
-  const outs = ev.outsBefore;
   const captionEl = document.getElementById('cartoonCaption');
-  if(captionEl) captionEl.textContent = `${outs} out${outs===1?'':'s'} — Up next: ${caption}`;
+  if(captionEl) captionEl.textContent = `Up next: ${caption}`;
+  updateScoreboard(scoreboardBefore(entry), false);
 
   updatePlaybackButtons();
 }
@@ -1405,9 +1460,10 @@ function fieldingTargetFor(ev){
   return FIELDER_POS[8];
 }
 
-async function animatePlay(ev, caption){
+async function animatePlay(entry){
+  const { ev, caption } = entry;
   const captionEl = document.getElementById('cartoonCaption');
-  if(captionEl) captionEl.textContent = `${ev.outsBefore} out${ev.outsBefore===1?'':'s'} — ${caption}`;
+  if(captionEl) captionEl.textContent = caption;
 
   // snap pre-existing runners to their basesBefore position — no animation, they
   // were already there from the previous play's resolution
@@ -1493,6 +1549,7 @@ async function animatePlay(ev, caption){
   }
 
   await Promise.all(movePromises);
+  updateScoreboard(scoreboardAfter(entry), true);
   await waitUnlessStopped(520);
 }
 
@@ -1526,7 +1583,7 @@ async function playCartoonFrom(startIndex){
       if(select && half){ const idx = CartoonPlayer.halfInnings.indexOf(half); if(idx>=0) select.value = String(idx); }
 
       CartoonPlayer.currentIndex = i;
-      await animatePlay(entry.ev, entry.caption);
+      await animatePlay(entry);
       CartoonPlayer.currentIndex = Math.min(i + 1, CartoonPlayer.playList.length - 1);
     }
     const captionEl = document.getElementById('cartoonCaption');
@@ -1560,6 +1617,20 @@ function openCartoon(){
       <select id="cartoonHalfSelect" class="field-input" style="margin:8px 0;">
         ${CartoonPlayer.halfInnings.map((h,i)=>`<option value="${i}">${h.label}</option>`).join('')}
       </select>
+      <div style="display:flex; align-items:center; justify-content:space-between; font-family:'Oswald'; margin-bottom:8px; padding:10px 12px; background:var(--ink); color:var(--cream); border-radius:8px;">
+        <div style="text-align:center; flex:1;">
+          <div style="font-size:9px; opacity:0.7; letter-spacing:.05em; text-transform:uppercase;">${game.meta.away||'Away'}</div>
+          <div id="cartoonAwayScore" style="font-size:20px; font-weight:600;">0</div>
+        </div>
+        <div style="text-align:center; flex:0 0 auto; padding:0 12px;">
+          <div id="cartoonInningMini" style="font-size:13px;">▲1</div>
+          <div id="cartoonOutsDisplay" style="font-size:11px; margin-top:4px; letter-spacing:.15em;">○○○</div>
+        </div>
+        <div style="text-align:center; flex:1;">
+          <div style="font-size:9px; opacity:0.7; letter-spacing:.05em; text-transform:uppercase;">${game.meta.home||'Home'}</div>
+          <div id="cartoonHomeScore" style="font-size:20px; font-weight:600;">0</div>
+        </div>
+      </div>
       <div id="cartoonCaption" style="font-family:'IBM Plex Mono'; font-size:12px; min-height:32px; margin-bottom:8px;">Tap play to start.</div>
       ${cartoonFieldSVG()}
       <div class="sheet-actions" style="margin-top:14px; gap:8px;">
