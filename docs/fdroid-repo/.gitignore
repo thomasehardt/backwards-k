@@ -1,0 +1,10 @@
+# NEVER commit these — the repo signing key and its plaintext passwords.
+# Anyone with these could publish malicious updates under this repo's identity.
+keystore.p12
+config.yml
+
+# fdroidserver scratch/cache dirs, not part of the published repo
+tmp/
+srclibs/
+stats/
+repo/status/

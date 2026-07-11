@@ -1,0 +1,42 @@
+AuthorName: Thomas Ehardt
+WebSite: https://github.com/thomasehardt/backwards-k
+Bitcoin: null
+Litecoin: null
+Donate: null
+
+License: MIT
+Categories:
+  - Sports
+
+IssueTracker: https://github.com/thomasehardt/backwards-k/issues
+SourceCode: https://github.com/thomasehardt/backwards-k
+Changelog: https://github.com/thomasehardt/backwards-k/commits/main
+
+Name: Backwards K
+Summary: Mobile baseball scorecard, digitizing the paper scoring notation
+Description: |
+  This app was co-authored by an AI agent (Claude, by Anthropic), directed
+  and reviewed by a human. See the project's source repository and git
+  history for the full record of what was generated versus human-directed.
+
+  Backwards K is a mobile-first digital scorecard for keeping score at a
+  baseball game — built to replace the paper scorecard, not simplify away
+  from it. It follows the same notation experienced scorers already use,
+  including the notation the app is named after: a backwards K for a
+  called third strike.
+
+  Features:
+
+  * Live scoring with the full paper-scorecard result vocabulary, including
+    fielder assist sequences (6-3, 4-6-3, ...)
+  * Automatic runs/RBI, derived from a baserunning simulation rather than
+    manual entry
+  * Automatic box score, including errors
+  * Multiple games saved locally, browsable from a Games tab
+  * Optional MLB Stats API sync to pull a real game's lineups and
+    play-by-play into the scorecard
+  * Non-LLM play-by-play recap generation from a finished game
+  * Fully offline once installed — no accounts, no tracking
+
+ArchivePolicy: 3 versions
+RequiresRoot: false

@@ -1,0 +1,154 @@
+name: Build Android app + publish F-Droid repo
+
+# Releases are deliberate: this only builds+publishes on a semver tag push
+# (v0.2.0 etc — `git tag v0.2.0 && git push --tags`), not on every commit.
+# workflow_dispatch is available for a manual rebuild of the current tag.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need full tag history for `git describe`
+
+      - name: Determine semantic version
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
+          fi
+          VERSION_NAME="${TAG#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_NAME"
+          # Android requires versionCode to be a plain increasing integer, but
+          # it can still be a deterministic function of the semver rather than
+          # an arbitrary counter — this encodes MAJOR.MINOR.PATCH directly, so
+          # the same tag always produces the same versionCode.
+          VERSION_CODE=$(( MAJOR * 1000000 + MINOR * 1000 + PATCH ))
+          echo "name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "Building version $VERSION_NAME (versionCode $VERSION_CODE)"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Decode app signing keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > mobile/android/backwardsk-release.keystore
+
+      - name: Write app keystore.properties
+        run: |
+          cat > mobile/android/keystore.properties <<EOF
+          storeFile=backwardsk-release.keystore
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+
+      - name: Sync web assets into the Capacitor project
+        run: bash mobile/sync-web-assets.sh
+
+      - name: Install Capacitor deps and sync Android project
+        working-directory: mobile
+        run: |
+          npm ci
+          npx cap sync android
+
+      - name: Build signed release APK
+        working-directory: mobile/android
+        run: |
+          ./gradlew assembleRelease \
+            -PappVersionCode="${{ steps.version.outputs.code }}" \
+            -PappVersionName="${{ steps.version.outputs.name }}"
+
+      - name: Verify the APK is actually signed correctly
+        run: |
+          APK=mobile/android/app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK"
+
+      - name: Install fdroidserver
+        run: |
+          pipx install fdroidserver
+          # https://github.com/f-droid/fdroidserver upstream bug: pkg_resources
+          # was removed from newer setuptools; fdroidserver 2.4.5 still needs it
+          pipx inject fdroidserver "setuptools<81"
+
+      - name: Decode F-Droid repo signing keystore
+        run: echo "${{ secrets.FDROID_KEYSTORE_BASE64 }}" | base64 -d > docs/fdroid-repo/keystore.p12
+
+      - name: Write F-Droid config.yml
+        run: |
+          cat > docs/fdroid-repo/config.yml <<EOF
+          sdk_path: ${ANDROID_HOME}
+          keystore: keystore.p12
+          keydname: CN=${{ secrets.FDROID_KEY_ALIAS }}, OU=F-Droid
+          keystorepass: ${{ secrets.FDROID_KEYSTORE_PASSWORD }}
+          keypass: ${{ secrets.FDROID_KEY_PASSWORD }}
+          repo_keyalias: ${{ secrets.FDROID_KEY_ALIAS }}
+
+          repo_url: https://thomasehardt.github.io/backwards-k/fdroid-repo/repo
+          repo_name: Backwards K F-Droid Repo
+          repo_description: >-
+            Personal F-Droid repo for Backwards K, a mobile baseball scorecard app.
+            AI co-authored (see the app's own description and the project README).
+          archive_older: 3
+          repo_icon: icon.png
+          EOF
+
+      - name: Update F-Droid repo index
+        working-directory: docs/fdroid-repo
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          mkdir -p repo
+          cp ../../mobile/android/app/build/outputs/apk/release/app-release.apk \
+            "repo/com.backwardsk.app_${{ steps.version.outputs.code }}.apk"
+          fdroid update -c
+
+      - name: Publish a stable-URL copy of the latest APK
+        run: cp mobile/android/app/build/outputs/apk/release/app-release.apk docs/backwards-k-latest.apk
+
+      - name: Create or update GitHub Release with the APK attached
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: v${{ steps.version.outputs.name }}
+        run: |
+          cp mobile/android/app/build/outputs/apk/release/app-release.apk \
+            "backwards-k-${RELEASE_TAG}.apk"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              "backwards-k-${RELEASE_TAG}.apk" --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              "backwards-k-${RELEASE_TAG}.apk" \
+              --title "$RELEASE_TAG" \
+              --generate-notes \
+              --latest
+          fi
+
+      - name: Commit published repo + latest APK back to the repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/fdroid-repo/repo docs/fdroid-repo/archive docs/backwards-k-latest.apk
+          git diff --cached --quiet && echo "nothing to commit" && exit 0
+          git commit -m "Publish v${{ steps.version.outputs.name }} [skip ci]"
+          # a tag-triggered checkout leaves us in detached HEAD, so `git push`
+          # alone doesn't know a target branch/ref
+          git push origin HEAD:main
