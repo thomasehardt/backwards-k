@@ -263,8 +263,8 @@ async function loadGame(){
 }
 
 async function saveGame(){
-  try{
-    localStorage.setItem('game:current', JSON.stringify(game));
+  try{ 
+    localStorage.setItem('game:current', JSON.stringify(game)); 
     let history = [];
     try{ history = JSON.parse(localStorage.getItem('game:history')||'[]'); }catch(e){}
     const idx = history.findIndex(g => g.id === game.id);
@@ -342,7 +342,7 @@ function recalcInning(team, inn){
   let bases = [null, null, null];
   let outs = 0;
   let lineup = game.lineups[team];
-
+  
   lineup.forEach(p => {
     let cell = game.atbats[team][p.id]?.[inn];
     if(cell && cell.computed) { cell.scored = false; cell.rbi = 0; }
@@ -352,7 +352,7 @@ function recalcInning(team, inn){
     if(outs >= 3) return;
     let cell = game.atbats[team][p.id]?.[inn];
     if(!cell || !cell.result) return;
-
+    
     const def = RESULTS[cell.result];
     let playRbi = 0;
     const score = (rId) => {
@@ -629,8 +629,8 @@ function openSheet(team, playerId){
       backdrop.querySelector('#rbiVal').textContent = rbi;
     });
   });
-  backdrop.querySelector('#scoredCheck').addEventListener('change', (e)=>{
-    computed = false; scored = e.target.checked;
+  backdrop.querySelector('#scoredCheck').addEventListener('change', (e)=>{ 
+    computed = false; scored = e.target.checked; 
   });
 
   backdrop.querySelector('#clearBtn').addEventListener('click', ()=>{
@@ -731,10 +731,10 @@ document.getElementById('mlbSyncBtn').addEventListener('click', async () => {
     const res = await fetch(`https://statsapi.mlb.com/api/v1.1/game/${pk}/feed/live`);
     const data = await res.json();
     const box = data.liveData.boxscore.teams;
-
+    
     game.meta.away = box.away.team.teamName || box.away.team.name;
     game.meta.home = box.home.team.teamName || box.home.team.name;
-
+    
     const popTeam = (tKey, sTeam) => {
       const t = box[tKey];
       if(!t.battingOrder || t.battingOrder.length===0) return;
@@ -745,10 +745,10 @@ document.getElementById('mlbSyncBtn').addEventListener('click', async () => {
     };
     popTeam('away', 'away');
     popTeam('home', 'home');
-
+    
     game.atbats.away = {};
     game.atbats.home = {};
-
+    
     const eventMap = {
       'Single':'1B', 'Double':'2B', 'Triple':'3B', 'Home Run':'HR',
       'Walk':'BB', 'Hit By Pitch':'HBP', 'Intent Walk':'BB',
@@ -766,7 +766,7 @@ document.getElementById('mlbSyncBtn').addEventListener('click', async () => {
         if(!play.matchup || !play.matchup.batter) return;
         const batterId = play.matchup.batter.id.toString();
         const event = play.result.event;
-
+        
         if(eventMap[event]) {
           if(!game.atbats[team][batterId]) game.atbats[team][batterId] = {};
           game.atbats[team][batterId][inn] = {
@@ -785,11 +785,11 @@ document.getElementById('mlbSyncBtn').addEventListener('click', async () => {
       recalcInning('away', i);
       recalcInning('home', i);
     }
-
+    
     if(data.liveData.linescore && data.liveData.linescore.currentInning) {
       game.activeInning = data.liveData.linescore.currentInning;
     }
-
+    
     saveGame();
     renderSetup(); renderScore(); renderBox();
     alert('Sync complete!');

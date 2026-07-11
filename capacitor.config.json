@@ -1,0 +1,8 @@
+{
+  "appId": "com.backwardsk.app",
+  "appName": "Backwards K",
+  "webDir": "www",
+  "android": {
+    "linuxAndroidStudioPath": "/home/thomas/.local/share/android-studio/bin/studio.sh"
+  }
+}
