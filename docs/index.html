@@ -211,6 +211,27 @@
 </div>
 
 <script>
+/* ---------------- release notes ----------------
+   Bump this list whenever a v*.*.* tag is cut (see CLAUDE.md release
+   checklist) — it's the single source of truth for the app's own version
+   number and for what the "What's new" prompt shows after an upgrade. Not
+   tied to the Android versionCode/versionName scheme; this is purely the
+   web-app-content version. */
+const RELEASE_NOTES = [
+  { version: '0.1.0', notes: [
+    "Live scoring with the full paper-scorecard vocabulary — hits, walks, every out type, fielder assist sequences (6-3, 4-6-3, ...).",
+    "Automatic runs, RBI, and box score (including errors), derived from a baserunning simulation instead of manual entry.",
+    "Multiple games saved locally, browsable from a Games tab.",
+    "Optional MLB Stats API sync to pull a real game's lineups and play-by-play into the scorecard.",
+    "First Android build, distributed via a self-hosted F-Droid repo.",
+  ]},
+  { version: '0.2.0', notes: [
+    "New Recap tab: non-LLM, template-based play-by-play recap generated from a finished game's at-bats.",
+    "A fact-accuracy scorer checks the generated recap against the real game data — content recall/precision, result accuracy, scoring accuracy, and play ordering.",
+    "Watch an animated cartoon replay of the game: runner tokens, ball trajectories, and synthesized sound effects, synced to the recap.",
+  ]},
+];
+
 /* ---------------- data model ---------------- */
 const RESULTS = {
   '1B': {group:'hit', ab:true, hit:true, bases:1, label:'1B'},
@@ -1567,11 +1588,53 @@ document.getElementById('mlbSyncBtn').addEventListener('click', async () => {
   document.getElementById('mlbSyncBtn').textContent = 'Sync Lineups & Plays';
 });
 
+/* ---------------- what's new ---------------- */
+function showWhatsNew(entries){
+  const backdrop = document.createElement('div');
+  backdrop.className = 'sheet-backdrop';
+  backdrop.innerHTML = `
+    <div class="sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title">What's new</div>
+      ${entries.map(e => `
+        <div class="group-label" style="margin-top:14px;">v${e.version}</div>
+        <ul style="margin:6px 0 0; padding-left:18px; font-family:'IBM Plex Mono'; font-size:12.5px; line-height:1.6; color:var(--ink);">
+          ${e.notes.map(n => `<li style="margin-bottom:4px;">${n}</li>`).join('')}
+        </ul>
+      `).join('')}
+      <div class="sheet-actions" style="margin-top:16px;">
+        <button class="btn-save" id="whatsNewCloseBtn" style="flex:1;">Got it</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(backdrop);
+  backdrop.addEventListener('click', (e)=>{ if(e.target===backdrop) backdrop.remove(); });
+  document.getElementById('whatsNewCloseBtn').addEventListener('click', ()=> backdrop.remove());
+}
+
+function checkForNewRelease(){
+  const currentVersion = RELEASE_NOTES[RELEASE_NOTES.length-1].version;
+  let lastSeen;
+  try{ lastSeen = localStorage.getItem('lastSeenVersion'); }catch(e){ return; }
+  if(lastSeen !== currentVersion){
+    if(lastSeen){
+      // upgrade from a known version: catch up on everything since then;
+      // unrecognized lastSeen (e.g. a very old build) just shows the latest
+      const idx = RELEASE_NOTES.findIndex(r => r.version === lastSeen);
+      const newEntries = idx >= 0 ? RELEASE_NOTES.slice(idx+1) : [RELEASE_NOTES[RELEASE_NOTES.length-1]];
+      if(newEntries.length) showWhatsNew(newEntries);
+    }
+    // no lastSeen at all = first-ever visit, not an upgrade — stay silent
+    try{ localStorage.setItem('lastSeenVersion', currentVersion); }catch(e){}
+  }
+}
+
 /* ---------------- init ---------------- */
 (async function init(){
   game = await loadGame();
   renderHistory();
   renderHeader(); renderSetup(); renderScore(); renderBox(); renderRecap();
+  checkForNewRelease();
 
   if('serviceWorker' in navigator){
     navigator.serviceWorker.register('sw.js').catch(()=>{});
