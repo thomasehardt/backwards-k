@@ -1593,13 +1593,13 @@ document.getElementById('mlbSyncBtn').addEventListener('click', async () => {
 });
 
 /* ---------------- what's new ---------------- */
-function showWhatsNew(entries){
+function showWhatsNew(entries, title){
   const backdrop = document.createElement('div');
   backdrop.className = 'sheet-backdrop';
   backdrop.innerHTML = `
     <div class="sheet">
       <div class="sheet-handle"></div>
-      <div class="sheet-title">What's new</div>
+      <div class="sheet-title">${title || "What's new"}</div>
       ${entries.map(e => `
         <div class="group-label" style="margin-top:14px;">v${e.version}</div>
         <ul style="margin:6px 0 0; padding-left:18px; font-family:'IBM Plex Mono'; font-size:12.5px; line-height:1.6; color:var(--ink);">
@@ -1627,8 +1627,14 @@ function checkForNewRelease(){
       const idx = RELEASE_NOTES.findIndex(r => r.version === lastSeen);
       const newEntries = idx >= 0 ? RELEASE_NOTES.slice(idx+1) : [RELEASE_NOTES[RELEASE_NOTES.length-1]];
       if(newEntries.length) showWhatsNew(newEntries);
+    } else {
+      // First-ever launch — a fresh browser profile, or (importantly) a
+      // native app install, which has its own separate localStorage even if
+      // you've used the web version before. This is exactly when a "here's
+      // what this app can do" intro is most useful, not least, so show the
+      // latest entry as a welcome rather than staying silent.
+      showWhatsNew([RELEASE_NOTES[RELEASE_NOTES.length-1]], 'Welcome to Backwards K');
     }
-    // no lastSeen at all = first-ever visit, not an upgrade — stay silent
     try{ localStorage.setItem('lastSeenVersion', currentVersion); }catch(e){}
   }
 }
