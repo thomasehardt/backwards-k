@@ -203,7 +203,8 @@
 
   <div class="screen" id="recap">
     <div class="box-pad">
-      <button class="btn-save" style="width:100%; margin-bottom:16px; padding:14px; font-size:15px;" id="generateRecapBtn">Generate Recap</button>
+      <button class="btn-save" style="width:100%; margin-bottom:10px; padding:14px; font-size:15px;" id="generateRecapBtn">Generate Recap</button>
+      <button class="btn-save" style="width:100%; margin-bottom:16px; padding:14px; font-size:15px; display:none; background:var(--amber); color:var(--ink);" id="watchCartoonBtn">▶ Watch the Replay</button>
       <div id="recapContent"></div>
     </div>
   </div>
@@ -852,28 +853,35 @@ function buildRecapHalfInning(team, inn){
 
   let bases = [null,null,null], outs = 0;
   const events = [];
+  const namesOnBases = () => bases.map(b => b ? nameOf[b.playerId] : null);
   for(const { playerId, cell } of plays){
     if(!cell.result) continue;
     const def = RESULTS[cell.result];
     const outsBefore = outs;
+    const basesBefore = namesOnBases();
     let scoredRunners = [];
+    let batterOutcome = 'out';
     const score = (runnerCell) => { if(runnerCell) scoredRunners.push({ id: runnerCell.playerId, name: nameOf[runnerCell.playerId] }); };
     // bases[] holds {playerId, ...} stand-ins so score() can resolve a name
     const runnerStub = { playerId };
 
     if(def.group === 'hit'){
       const b = def.bases;
+      batterOutcome = b;
       if(b===4){ if(bases[2])score(bases[2]); if(bases[1])score(bases[1]); if(bases[0])score(bases[0]); score(runnerStub); bases=[null,null,null]; }
       else if(b===3){ if(bases[2])score(bases[2]); if(bases[1])score(bases[1]); if(bases[0])score(bases[0]); bases=[null,null,runnerStub]; }
       else if(b===2){ if(bases[2])score(bases[2]); if(bases[1])score(bases[1]); bases=[null,runnerStub,bases[0]]; }
       else if(b===1){ score(bases[2]); bases=[runnerStub,bases[0],bases[1]]; }
     } else if(def.group === 'onbase'){
       if(cell.result==='BB' || cell.result==='HBP'){
+        batterOutcome = 1;
         if(bases[0]){ if(bases[1]){ if(bases[2]) score(bases[2]); bases[2]=bases[1]; } bases[1]=bases[0]; }
         bases[0]=runnerStub;
       } else if(cell.result==='FC'){
+        batterOutcome = 1;
         outs++; bases=[runnerStub, bases[1], bases[2]];
       } else if(cell.result==='E'){
+        batterOutcome = 1;
         score(bases[2]); bases[2]=bases[1]; bases[1]=bases[0]; bases[0]=runnerStub;
       }
     } else if(def.group === 'out'){
@@ -883,7 +891,7 @@ function buildRecapHalfInning(team, inn){
     }
 
     events.push({ batterId: playerId, batterName: nameOf[playerId], result: cell.result, fielding: cell.fielding,
-      outsBefore, scoredRunners, isThirdOut: outs >= 3 });
+      outsBefore, scoredRunners, isThirdOut: outs >= 3, basesBefore, basesAfter: namesOnBases(), batterOutcome });
     if(outs >= 3) break;
   }
   const runsThisInning = events.reduce((s,e)=>s+e.scoredRunners.length,0);
@@ -1102,10 +1110,13 @@ function scoreRecap(text){
 
 function renderRecap(){
   const content = document.getElementById('recapContent');
+  const watchBtn = document.getElementById('watchCartoonBtn');
   if(!game.recap){
     content.innerHTML = `<div style="font-size:12px; color:#8a9691;">No recap generated yet. Score a few innings, then tap Generate Recap.</div>`;
+    watchBtn.style.display = 'none';
     return;
   }
+  watchBtn.style.display = 'block';
   const pct = (x) => x===null ? '—' : Math.round(x*100) + '%';
   const score = scoreRecap(game.recap.text);
   content.innerHTML = `
@@ -1120,6 +1131,299 @@ function renderRecap(){
     </table>
     <div style="font-size:11px; color:#8a9691; margin-top:8px;">${score.matchedCount}/${score.groundTruthCount} at-bats matched to text, ${score.extractedCount} claims extracted. Scored by parsing the text's prose against game data — not by trusting the generator's own bookkeeping.</div>
   `;
+}
+
+/* ---------------- cartoon replay: animation engine (geometric theme) ----------------
+   Renders the same per-play events buildRecapHalfInning() already produces for the
+   text recap, as a simple animated field: geometric SVG tokens for batter/runners/
+   ball, synthesized Web Audio sound cues (no audio files), captions reusing
+   realizeRecapPlay() so the wording matches the text recap exactly. This is the
+   "engine" layer — a richer illustrated theme can render on top of the same event
+   data and choreography later without changing any of this. */
+
+const FIELD_PT = { home:[100,176], first:[176,100], second:[100,24], third:[24,100], pitcher:[100,138] };
+const FIELD_CIRCUIT = [FIELD_PT.home, FIELD_PT.first, FIELD_PT.second, FIELD_PT.third]; // index 0..3; base 4 wraps to home
+const FIELDER_POS = {
+  1: FIELD_PT.pitcher, 2:[100,190], 3:[150,125], 4:[128,72], 5:[72,125], 6:[72,72],
+  7:[35,55], 8:[100,15], 9:[165,55],
+};
+
+function cartoonFieldSVG(){
+  const base = (pt) => `<rect x="${pt[0]-4}" y="${pt[1]-4}" width="8" height="8" fill="#fff"/>`;
+  return `
+  <svg viewBox="0 0 200 200" id="cartoonField" style="width:100%; display:block; background:#3f7d4f; border-radius:10px;">
+    <path d="M${FIELD_PT.home} L${FIELD_PT.first} L${FIELD_PT.second} L${FIELD_PT.third} Z" fill="#c9a06a" stroke="#fff" stroke-width="1"/>
+    <line x1="${FIELD_PT.home[0]}" y1="${FIELD_PT.home[1]}" x2="196" y2="${FIELD_PT.home[1]-160}" stroke="#fff" stroke-width="1"/>
+    <line x1="${FIELD_PT.home[0]}" y1="${FIELD_PT.home[1]}" x2="4" y2="${FIELD_PT.home[1]-160}" stroke="#fff" stroke-width="1"/>
+    <circle cx="${FIELD_PT.pitcher[0]}" cy="${FIELD_PT.pitcher[1]}" r="7" fill="#c9a06a"/>
+    ${Object.values(FIELDER_POS).map(([x,y])=>`<circle r="5.5" cx="${x}" cy="${y}" fill="#1F4D3D" stroke="#fff" stroke-width="1"/>`).join('')}
+    ${base(FIELD_PT.home)}${base(FIELD_PT.first)}${base(FIELD_PT.second)}${base(FIELD_PT.third)}
+    <circle id="cartoonBall" cx="${FIELD_PT.pitcher[0]}" cy="${FIELD_PT.pitcher[1]}" r="2.5" fill="#fff" style="display:none;"/>
+    <g id="cartoonRunners"></g>
+  </svg>`;
+}
+
+let cartoonAudioCtx = null;
+function getAudioCtx(){
+  if(!cartoonAudioCtx) cartoonAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if(cartoonAudioCtx.state === 'suspended') cartoonAudioCtx.resume();
+  return cartoonAudioCtx;
+}
+function playTone(freq, duration, type, gainPeak, delay){
+  delay = delay || 0;
+  const ctx = getAudioCtx();
+  const osc = ctx.createOscillator(), gain = ctx.createGain();
+  osc.type = type || 'sine';
+  osc.frequency.setValueAtTime(freq, ctx.currentTime + delay);
+  gain.gain.setValueAtTime(0, ctx.currentTime + delay);
+  gain.gain.linearRampToValueAtTime(gainPeak, ctx.currentTime + delay + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + duration);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(ctx.currentTime + delay);
+  osc.stop(ctx.currentTime + delay + duration + 0.02);
+}
+function playNoiseBurst(duration, gainPeak){
+  const ctx = getAudioCtx();
+  const bufferSize = Math.max(1, Math.floor(ctx.sampleRate * duration));
+  const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for(let i=0;i<bufferSize;i++) data[i] = (Math.random()*2-1) * (1 - i/bufferSize);
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(gainPeak, ctx.currentTime);
+  src.connect(gain).connect(ctx.destination);
+  src.start();
+}
+const SFX = {
+  contact(){ playNoiseBurst(0.12, 0.25); playTone(700, 0.08, 'square', 0.08); },
+  homeRun(){ playNoiseBurst(0.15, 0.3); [500,700,900,1200].forEach((f,i)=>playTone(f,0.15,'sine',0.1,i*0.08)); },
+  strikeout(){ playTone(180, 0.25, 'sawtooth', 0.12); },
+  walk(){ playTone(440, 0.1, 'sine', 0.08); },
+  out(){ playTone(220, 0.15, 'square', 0.1); },
+  cheer(){ playNoiseBurst(0.6, 0.15); },
+};
+
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+const CartoonPlayer = { playing:false, paused:false, stopRequested:false };
+async function waitUnlessStopped(ms){
+  await sleep(ms);
+  if(CartoonPlayer.stopRequested) throw new Error('CARTOON_STOPPED');
+}
+
+let cartoonRunnerTokens = {}; // playerName -> svg circle element
+function getOrCreateRunnerToken(name){
+  if(cartoonRunnerTokens[name]) return cartoonRunnerTokens[name];
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  el.setAttribute('r', 5);
+  el.setAttribute('fill', '#E8A33D');
+  el.setAttribute('stroke', '#1F4D3D');
+  el.setAttribute('stroke-width', '1.2');
+  el.setAttribute('cx', FIELD_PT.home[0]-10);
+  el.setAttribute('cy', FIELD_PT.home[1]+4);
+  document.getElementById('cartoonRunners').appendChild(el);
+  cartoonRunnerTokens[name] = el;
+  return el;
+}
+function removeRunnerToken(name){
+  const el = cartoonRunnerTokens[name];
+  if(el){ el.remove(); delete cartoonRunnerTokens[name]; }
+}
+function resetCartoonField(){
+  Object.keys(cartoonRunnerTokens).forEach(removeRunnerToken);
+}
+
+function moveToken(el, pt, duration){
+  el.style.transition = `cx ${duration}ms ease, cy ${duration}ms ease`;
+  el.setAttribute('cx', pt[0]); el.setAttribute('cy', pt[1]);
+}
+async function animateAlongCircuit(el, fromIdx, toIdx, legDuration){
+  for(let i=fromIdx; i<toIdx; i++){
+    const target = FIELD_CIRCUIT[(i+1) % 4];
+    moveToken(el, target, legDuration);
+    await waitUnlessStopped(legDuration);
+  }
+}
+
+function fieldingTargetFor(ev){
+  const def = RESULTS[ev.result];
+  if(ev.fielding){
+    const firstDigit = ev.fielding.split('-')[0];
+    if(FIELDER_POS[firstDigit]) return FIELDER_POS[firstDigit];
+  }
+  if(ev.result === 'HR') return [100,-10]; // sails off the top of the field
+  if(def.group === 'hit'){
+    const gapByBases = { 1:[70,110], 2:[50,70], 3:[30,40] };
+    return gapByBases[def.bases] || FIELDER_POS[8];
+  }
+  return FIELDER_POS[8];
+}
+
+async function animatePlay(ev, caption){
+  const captionEl = document.getElementById('cartoonCaption');
+  if(captionEl) captionEl.textContent = caption;
+
+  // snap pre-existing runners to their basesBefore position — no animation, they
+  // were already there from the previous play's resolution
+  ev.basesBefore.forEach((name, i) => {
+    if(!name) return;
+    const el = getOrCreateRunnerToken(name);
+    el.style.transition = 'none';
+    el.setAttribute('cx', FIELD_CIRCUIT[i+1][0]);
+    el.setAttribute('cy', FIELD_CIRCUIT[i+1][1]);
+  });
+
+  const batterToken = getOrCreateRunnerToken(ev.batterName);
+  batterToken.style.transition = 'none';
+  batterToken.setAttribute('cx', FIELD_PT.home[0]-10);
+  batterToken.setAttribute('cy', FIELD_PT.home[1]+4);
+
+  const ball = document.getElementById('cartoonBall');
+  ball.style.display = 'block';
+  ball.style.transition = 'none';
+  ball.setAttribute('cx', FIELD_PT.pitcher[0]);
+  ball.setAttribute('cy', FIELD_PT.pitcher[1]);
+  await sleep(30);
+
+  moveToken(ball, FIELD_PT.home, 220);
+  await waitUnlessStopped(240);
+
+  const isStrikeout = ev.result === 'K' || ev.result === 'KC';
+  const isWalk = ev.result === 'BB' || ev.result === 'HBP';
+
+  if(isStrikeout){
+    SFX.strikeout();
+    batterToken.style.transition = 'transform 0.15s';
+    batterToken.style.transformOrigin = 'center';
+    batterToken.style.transform = 'rotate(-20deg)';
+    await waitUnlessStopped(250);
+    batterToken.style.transform = '';
+    ball.style.display = 'none';
+  } else if(isWalk){
+    SFX.walk();
+    await waitUnlessStopped(150);
+    ball.style.display = 'none';
+  } else {
+    SFX.contact();
+    moveToken(ball, fieldingTargetFor(ev), 450);
+    await waitUnlessStopped(470);
+    ball.style.display = 'none';
+    if(ev.batterOutcome === 'out') SFX.out();
+  }
+
+  const scoredNames = new Set(ev.scoredRunners.map(r=>r.name));
+  const movePromises = [];
+
+  for(let i=0;i<3;i++){
+    const name = ev.basesBefore[i];
+    if(!name) continue;
+    const afterIdx = ev.basesAfter.indexOf(name);
+    if(afterIdx === i) continue; // stayed put
+    const el = cartoonRunnerTokens[name];
+    if(!el) continue;
+    if(afterIdx >= 0){
+      movePromises.push(animateAlongCircuit(el, i+1, afterIdx+1, 260));
+    } else if(scoredNames.has(name)){
+      movePromises.push(animateAlongCircuit(el, i+1, 4, 260).then(()=>{ SFX.cheer(); removeRunnerToken(name); }));
+    } else {
+      movePromises.push((async()=>{
+        el.style.transition = 'opacity 0.3s'; el.style.opacity = '0.15';
+        await waitUnlessStopped(300);
+        removeRunnerToken(name);
+      })());
+    }
+  }
+
+  if(ev.batterOutcome === 'out'){
+    movePromises.push((async()=>{
+      batterToken.style.transition = 'opacity 0.3s'; batterToken.style.opacity = '0.15';
+      await waitUnlessStopped(300);
+      removeRunnerToken(ev.batterName);
+    })());
+  } else if(ev.batterOutcome === 4){
+    movePromises.push(animateAlongCircuit(batterToken, 0, 4, 260).then(()=>{ SFX.homeRun(); SFX.cheer(); removeRunnerToken(ev.batterName); }));
+  } else {
+    movePromises.push(animateAlongCircuit(batterToken, 0, ev.batterOutcome, 260));
+  }
+
+  await Promise.all(movePromises);
+  await waitUnlessStopped(350);
+}
+
+async function playCartoon(){
+  if(CartoonPlayer.playing) return;
+  CartoonPlayer.playing = true;
+  CartoonPlayer.stopRequested = false;
+  CartoonPlayer.paused = false;
+  getAudioCtx();
+
+  const innNums = [];
+  for(const team of ['away','home']){
+    Object.values(game.atbats[team]).forEach(rows => Object.keys(rows).forEach(inn => innNums.push(+inn)));
+  }
+  const maxInning = innNums.length ? Math.max(...innNums) : 0;
+  const rng = mulberry32(Date.now() ^ 0);
+
+  try {
+    for(let inn=1; inn<=maxInning; inn++){
+      for(const team of ['away','home']){
+        const { events } = buildRecapHalfInning(team, inn);
+        if(!events.length) continue;
+        resetCartoonField();
+        const label = document.getElementById('cartoonInningLabel');
+        if(label) label.textContent = `${team==='away'?'Top':'Bottom'} ${RECAP_ORDINAL[inn]} — ${team==='away'?(game.meta.away||'Visitors'):(game.meta.home||'Home')}`;
+        for(const ev of events){
+          while(CartoonPlayer.paused && !CartoonPlayer.stopRequested) await sleep(120);
+          if(CartoonPlayer.stopRequested) throw new Error('CARTOON_STOPPED');
+          const caption = realizeRecapPlay(rng, ev);
+          await animatePlay(ev, caption);
+        }
+      }
+    }
+    const captionEl = document.getElementById('cartoonCaption');
+    if(captionEl) captionEl.textContent = 'Replay complete.';
+  } catch(e){
+    if(e.message !== 'CARTOON_STOPPED') throw e;
+  } finally {
+    CartoonPlayer.playing = false;
+  }
+}
+
+function closeCartoon(){
+  CartoonPlayer.stopRequested = true;
+  CartoonPlayer.paused = false;
+  const backdrop = document.getElementById('cartoonBackdrop');
+  if(backdrop) backdrop.remove();
+}
+
+function openCartoon(){
+  const backdrop = document.createElement('div');
+  backdrop.className = 'sheet-backdrop';
+  backdrop.id = 'cartoonBackdrop';
+  backdrop.innerHTML = `
+    <div class="sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title" id="cartoonInningLabel">Game Replay</div>
+      <div id="cartoonCaption" style="font-family:'IBM Plex Mono'; font-size:12px; min-height:32px; margin:6px 0 10px;">Tap play to start.</div>
+      ${cartoonFieldSVG()}
+      <div class="sheet-actions" style="margin-top:14px;">
+        <button class="btn-clear" id="cartoonCloseBtn">Close</button>
+        <button class="btn-save" id="cartoonPlayPauseBtn">▶ Play</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(backdrop);
+  backdrop.addEventListener('click', (e)=>{ if(e.target===backdrop) closeCartoon(); });
+  document.getElementById('cartoonCloseBtn').addEventListener('click', closeCartoon);
+  document.getElementById('cartoonPlayPauseBtn').addEventListener('click', (e)=>{
+    if(!CartoonPlayer.playing){
+      e.target.textContent = '⏸ Pause';
+      playCartoon().then(()=>{ if(document.getElementById('cartoonPlayPauseBtn')) document.getElementById('cartoonPlayPauseBtn').textContent = '↻ Replay'; });
+    } else {
+      CartoonPlayer.paused = !CartoonPlayer.paused;
+      e.target.textContent = CartoonPlayer.paused ? '▶ Resume' : '⏸ Pause';
+    }
+  });
 }
 
 /* ---------------- tabs / wiring ---------------- */
@@ -1155,6 +1459,8 @@ document.getElementById('generateRecapBtn').addEventListener('click', ()=>{
   game.recap = generateRecap();
   saveGame(); renderRecap();
 });
+
+document.getElementById('watchCartoonBtn').addEventListener('click', openCartoon);
 
 /* ---------------- MLB API ---------------- */
 document.getElementById('mlbDate').value = new Date().toISOString().slice(0,10);
