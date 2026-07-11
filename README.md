@@ -30,8 +30,11 @@ history, and (optionally) real MLB data.
 - **MLB Stats API sync** — pull a real game's lineups and play-by-play from
   [statsapi.mlb.com](https://statsapi.mlb.com) into the scorecard, useful for
   testing against real games or just following along with one.
-- **Installable / offline-capable** — a PWA manifest and service worker, plus a
-  Capacitor scaffold for wrapping it as a native Android app.
+- **Play-by-play recap** — template/rule-based (no model calls) narrative
+  generation from a game's at-bat sequence; see the Recap tab.
+- **Installable / offline-capable** — a PWA manifest and service worker, hosted
+  on GitHub Pages, plus a signed native Android build distributed via a
+  self-hosted F-Droid repo (see "Android" below).
 
 ## Project layout
 
@@ -40,8 +43,9 @@ index.html      the entire app — markup, styles, and logic in one file
 manifest.json   PWA manifest
 sw.js           offline-caching service worker
 SCORING.md      the paper scoring notation this app's picker is based on
-capacitor.config.json, package.json, www/   Capacitor native-app scaffold
 icons/, assets/ app icons
+mobile/         Capacitor + Android native project (see "Android" below)
+docs/           GitHub Pages: a copy of the web app + the self-hosted F-Droid repo
 ```
 
 There's no build step for the web app. Open `index.html` directly, or serve the
@@ -49,36 +53,57 @@ folder with any static file server.
 
 ## Status
 
-Working prototype. Game state persists in the browser via `localStorage`. Not
-yet deployed to a real domain or published to an app store.
+Working prototype, hosted as a real PWA (GitHub Pages) with a signed Android
+build published on tagged releases. Game state persists in the browser via
+`localStorage` — no backend, no cross-device sync yet.
 
 ### Known gaps
 
 - **Left-on-base** isn't computed in the box score yet.
-- Icons referenced by `manifest.json` exist under `icons/`, but the install
-  experience hasn't been tested on a real device yet.
+- Install/update flow hasn't been tested on a real Android device yet, only
+  via local builds and `apksigner verify`.
 
-## Running it as a native app
+## Play it in the browser
 
-The Capacitor scaffold (`capacitor.config.json`, `package.json`, `www/`) wraps
-the web app for Android. The generated `android/` project itself isn't checked
-in (see `.gitignore`) — regenerate it with:
+The app is also hosted as a plain PWA via GitHub Pages:
+**https://thomasehardt.github.io/backwards-k/** — installable via "Add to
+Home Screen" on mobile.
+
+## Android
+
+There's a native Android build too, via [Capacitor](https://capacitorjs.com/)
+(`mobile/`) — same web app, wrapped as a real app. It's not on the Play
+Store. A [GitHub Actions workflow](.github/workflows/android-build.yml)
+builds and publishes a signed release APK on every version tag (`v*.*.*`).
+Two ways to get it:
+
+- **Sideload the latest APK directly** —
+  [backwards-k-latest.apk](https://thomasehardt.github.io/backwards-k/backwards-k-latest.apk),
+  always the most recent tagged release; install it manually (you'll need to
+  allow installs from the source you download it from).
+- **Add the self-hosted F-Droid repo** — in the F-Droid app, add this repo:
+  `https://thomasehardt.github.io/backwards-k/fdroid-repo/repo`. You'll get
+  real F-Droid-style installs and update notifications without it being in
+  the official F-Droid catalog.
+
+To build it yourself:
 
 ```bash
+cd mobile
 npm install
-npx cap add android
+bash sync-web-assets.sh   # regenerates mobile/www/ from the root web app
 npx cap sync android
-npx cap open android
+npx cap open android      # opens Android Studio, or:
+cd android && ./gradlew assembleDebug
 ```
 
-From there it's a standard Android Studio build. An iOS build would follow the
-same pattern (`npx cap add ios`) but hasn't been set up yet.
+See `CLAUDE.md` for the signing/release/F-Droid-repo details.
 
 ## Roadmap
 
 - Left-on-base in the box score.
-- Real hosting + a persistence story beyond `localStorage` if cross-device sync
-  matters.
+- A persistence story beyond `localStorage` if cross-device sync matters.
 - iOS build via Capacitor.
-- Non-LLM play-by-play recap generation from a finished game's at-bat sequence
-  (unblocked now that at-bats carry a true chronological order).
+- A fact-accuracy scorer for the recap generator (checks generated claims
+  against `game.atbats`), so the non-LLM approach can be compared against an
+  LLM-based one on equal footing.
