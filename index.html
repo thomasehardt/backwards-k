@@ -1187,13 +1187,49 @@ function renderRecap(){
    "engine" layer — a richer illustrated theme can render on top of the same event
    data and choreography later without changing any of this. */
 
-// A true 45°-rotated square (dx=dy=45 on every side) so the diamond reads as
-// a proper diamond, not a skewed kite.
-const FIELD_PT = { home:[100,183], first:[145,138], second:[100,93], third:[55,138], pitcher:[100,147] };
+// Every point below is derived from a small set of named constants (not
+// independently hand-picked coordinates), so the diamond, foul lines, and
+// infield dirt shape are all *provably* consistent with real baseball
+// geometry — see the field-geometry test in the project's test suite, which
+// asserts these relationships directly instead of relying on eyeballing
+// screenshots against a reference image (a foul-line bug shipped twice
+// because that's what eyeballing missed).
+const FIELD_VIEWBOX = { w: 220, h: 180 };
+const HALF_DIAGONAL = 45; // home-to-first == first-to-second == ... (a true rotated square)
+const HOME = [110, 150];
+const FIELD_PT = {
+  home: HOME,
+  first: [HOME[0]+HALF_DIAGONAL, HOME[1]-HALF_DIAGONAL],
+  second: [HOME[0], HOME[1]-2*HALF_DIAGONAL],
+  third: [HOME[0]-HALF_DIAGONAL, HOME[1]-HALF_DIAGONAL],
+  pitcher: [HOME[0], HOME[1]-0.8*HALF_DIAGONAL],
+};
 const FIELD_CIRCUIT = [FIELD_PT.home, FIELD_PT.first, FIELD_PT.second, FIELD_PT.third]; // index 0..3; base 4 wraps to home
+
+function pointAlong(from, to, length){
+  const dx = to[0]-from[0], dy = to[1]-from[1];
+  const mag = Math.hypot(dx, dy);
+  return [from[0] + dx/mag*length, from[1] + dy/mag*length];
+}
+// Foul lines ARE the home-first and home-third baselines, extended — not
+// independently chosen endpoints. This is the exact bug that shipped twice:
+// hand-picked foul-line endpoints that didn't actually pass through the bases.
+const FOUL_LINE_LENGTH = 148;
+const FOUL_END_FIRST = pointAlong(FIELD_PT.home, FIELD_PT.first, FOUL_LINE_LENGTH);
+const FOUL_END_THIRD = pointAlong(FIELD_PT.home, FIELD_PT.third, FOUL_LINE_LENGTH);
+
+// Infield dirt ellipse: centered on the diamond's own center (independently
+// verifiable as midpoint(home,second) === midpoint(first,third), since a
+// proper rotated square is also a rhombus), sized as the diamond's bounding
+// half-width/half-height plus a fixed margin — not eyeballed.
+const DIRT_MARGIN_X = 25, DIRT_MARGIN_Y = 15;
+const DIAMOND_CENTER = [ (FIELD_PT.first[0]+FIELD_PT.third[0])/2, (FIELD_PT.home[1]+FIELD_PT.second[1])/2 ];
+const DIRT_RX = HALF_DIAGONAL + DIRT_MARGIN_X;
+const DIRT_RY = HALF_DIAGONAL + DIRT_MARGIN_Y;
+
 const FIELDER_POS = {
-  1: FIELD_PT.pitcher, 2:[100,198], 3:[132,152], 4:[118,111], 5:[68,152], 6:[82,111],
-  7:[35,42], 8:[100,15], 9:[165,42],
+  1: FIELD_PT.pitcher, 2:[HOME[0],168], 3:[142,119], 4:[128,78], 5:[78,119], 6:[92,78],
+  7:[45,35], 8:[HOME[0],12], 9:[175,35],
 };
 
 function cartoonFieldSVG(){
@@ -1207,17 +1243,16 @@ function cartoonFieldSVG(){
   const boxR = `M${home[0]+11},${home[1]-6} L${home[0]+11},${home[1]+2} L${home[0]+8},${home[1]+2} M${home[0]+11},${home[1]-6} L${home[0]+8},${home[1]-6}`;
   // The infield "skin" is a dirt *frame*, not a solid dome — its diamond
   // interior is cut back to grass (drawn by filling the diamond with the
-  // field's own background color on top of the dome), matching the reference
-  // exactly rather than approximating it as a solid fill with a white outline
-  // drawn over it. Plus a floating outfield boundary band well outside all of
-  // it, with grass showing through the gaps. Matches this app's own
-  // diamondSVG() styling, scaled up, rather than real-world field accuracy.
+  // field's own background color on top of the dome). Plus a floating
+  // outfield boundary band well outside all of it, with grass showing through
+  // the gaps. Matches this app's own diamondSVG() styling, scaled up, rather
+  // than real-world field accuracy.
   return `
-  <svg viewBox="0 0 200 205" id="cartoonField" style="width:100%; display:block; background:#3f7d4f; border-radius:10px;">
-    <line x1="${home[0]}" y1="${home[1]}" x2="20" y2="60" stroke="#fff" stroke-width="1"/>
-    <line x1="${home[0]}" y1="${home[1]}" x2="180" y2="60" stroke="#fff" stroke-width="1"/>
-    <path d="M20,60 Q100,8 180,60" fill="none" stroke="#c9a06a" stroke-width="14" stroke-linecap="round"/>
-    <ellipse cx="100" cy="130" rx="72" ry="45" fill="#c9a06a"/>
+  <svg viewBox="0 0 ${FIELD_VIEWBOX.w} ${FIELD_VIEWBOX.h}" id="cartoonField" style="width:100%; display:block; background:#3f7d4f; border-radius:10px;">
+    <line x1="${home[0]}" y1="${home[1]}" x2="${FOUL_END_FIRST[0]}" y2="${FOUL_END_FIRST[1]}" stroke="#fff" stroke-width="1"/>
+    <line x1="${home[0]}" y1="${home[1]}" x2="${FOUL_END_THIRD[0]}" y2="${FOUL_END_THIRD[1]}" stroke="#fff" stroke-width="1"/>
+    <path d="M${FOUL_END_THIRD} Q${DIAMOND_CENTER[0]},${FOUL_END_FIRST[1]-38} ${FOUL_END_FIRST}" fill="none" stroke="#c9a06a" stroke-width="14" stroke-linecap="round"/>
+    <ellipse cx="${DIAMOND_CENTER[0]}" cy="${DIAMOND_CENTER[1]}" rx="${DIRT_RX}" ry="${DIRT_RY}" fill="#c9a06a"/>
     <path d="M${FIELD_PT.home} L${FIELD_PT.first} L${FIELD_PT.second} L${FIELD_PT.third} Z" fill="#3f7d4f"/>
     <path d="M${FIELD_PT.home} L${FIELD_PT.first} L${FIELD_PT.second} L${FIELD_PT.third} Z" fill="none" stroke="#fff" stroke-width="1.5"/>
     <circle cx="${home[0]}" cy="${home[1]}" r="14" fill="#c9a06a"/>
