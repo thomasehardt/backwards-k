@@ -841,7 +841,7 @@ function realizeRecapPlay(rng, ev){
 // uses, but keeps player names and produces one narratable event per play.
 function buildRecapHalfInning(team, inn){
   const lineup = game.lineups[team];
-  const nameOf = {}; lineup.forEach((p,i) => nameOf[p.id] = p.name || `the No. ${i+1} hitter`);
+  const nameOf = {}; lineup.forEach((p,i) => nameOf[p.id] = p.name || `Batter ${i+1}`);
 
   let plays = [];
   lineup.forEach(p => {
@@ -935,13 +935,191 @@ function generateRecap(){
   return { text: lines.join('\n\n'), claims };
 }
 
+/* ---------------- recap accuracy scorer ----------------
+   Checks generated recap TEXT against game.atbats ground truth. Deliberately
+   does not consume generateRecap()'s internal `claims` list or any knowledge
+   of which templates/phrases produced the text — it parses raw prose via a
+   generic keyword vocabulary, so the same scorer can be pointed at output
+   from a different (e.g. LLM-based) generator later for a fair comparison.
+   Modeled on Wiseman/Shieber/Rush 2017 (RotoWire: content selection +
+   relation generation) and Reiter/Thomson 2020 (NLG accuracy shared task).
+
+   Known limitation: the keyword vocabulary below is broader than our own
+   phrase bank but still finite — a generator using genuinely novel phrasing
+   ("cranked a moonshot") will under-recall. This is an honest MVP, not a
+   general-purpose information-extraction system. */
+
+function groundTruthClaims(){
+  const innNums = [];
+  for(const team of ['away','home']){
+    Object.values(game.atbats[team]).forEach(rows => {
+      Object.keys(rows).forEach(inn => innNums.push(+inn));
+    });
+  }
+  const maxInning = innNums.length ? Math.max(...innNums) : 0;
+  const claims = [];
+  for(let inn = 1; inn <= maxInning; inn++){
+    for(const team of ['away','home']){
+      const { events } = buildRecapHalfInning(team, inn);
+      events.forEach(ev => {
+        // Exclude the batter's own name from scoredNames: no reasonable recap
+        // sentence restates "X homered, scoring X" — the batter's own run is
+        // already implied by the verb. Matches the convention realizeRecapPlay
+        // uses, and is the correct ground truth regardless of which generator
+        // produced the text (nobody writes it the other way).
+        const scoredNames = ev.scoredRunners.filter(r => r.id !== ev.batterId).map(r => r.name);
+        claims.push({ team, inning: inn, batterName: ev.batterName, result: ev.result, scoredNames });
+      });
+    }
+  }
+  return claims;
+}
+
+const CLAIM_PATTERNS = [
+  { result:'HR', re:/\bhome run\b|\bhomered\b|\bwent deep\b|\bover the fence\b|\bleft the yard\b|\bgrand slam\b|\bblasted\b|\bcranked\b|\bwent yard\b/i },
+  { result:'3B', re:/\btripled\b|\btriple\b/i },
+  { result:'2B', re:/\bdoubled\b|\bdouble\b(?!\s+play)|\btwo-bagger\b/i },
+  { result:'1B', re:/\bsingled\b|\bsingle\b|\bbase hit\b|\broped a\b/i },
+  { result:'BB', re:/\bwalked\b|\bwalk\b|\bbase on balls\b|\btook ball four\b/i },
+  { result:'HBP', re:/\bhit by (the )?pitch\b|\bplunked\b|\bbeaned\b/i },
+  { result:'DP', re:/\bdouble play\b/i },
+  { result:'SAC', re:/\bsacrifice\b|\bsac bunt\b|\bsac fly\b/i },
+  { result:'FC', re:/\bfielder'?s choice\b/i },
+  { result:'E', re:/\berror\b/i },
+  { result:'KC', re:/\blooking\b|\bthird strike\b/i },
+  { result:'K', re:/\bstruck out\b|\bstrikeout\b|\bwhiffed\b|\bfanned\b|\bdown swinging\b|\bdown on strikes\b/i },
+  { result:'L', re:/\blined out\b|\bline out\b/i },
+  { result:'FO', re:/\bflied out\b|\bfly out\b|\bskied one\b/i },
+  { result:'F', re:/\bpopped out\b|\bpop out\b|\bpopped it up\b/i },
+  { result:'GO', re:/\bgrounded out\b|\bground out\b|\bthrown out at first\b|\bwho threw\b|\bgrounded (to|back)\b|\bchopped one\b/i },
+];
+function classifyResult(text){
+  for(const {result, re} of CLAIM_PATTERNS){ if(re.test(text)) return result; }
+  return null;
+}
+
+function extractClaimsFromText(text){
+  // Same fallback naming convention buildRecapHalfInning uses for blank
+  // lineup slots — searched per-team (scoped by the half-inning header)
+  // rather than as one combined list, so "Batter 1" can't collide across
+  // two teams that both have blank names at the same lineup slot.
+  const namesFor = (team) => game.lineups[team]
+    .map((p,i) => ({ id: p.id, name: p.name || `Batter ${i+1}` }))
+    .sort((a,b) => b.name.length - a.name.length);
+
+  const claims = [];
+  const paragraphs = text.split(/\n\n+/);
+  for(const para of paragraphs){
+    const headerMatch = para.match(/^(Top|Bottom)\s+(\w+)\s*:\s*/i);
+    if(!headerMatch) continue;
+    const team = headerMatch[1].toLowerCase() === 'top' ? 'away' : 'home';
+    const inning = RECAP_ORDINAL.indexOf(headerMatch[2].toLowerCase());
+    if(inning < 1) continue;
+    const body = para.slice(headerMatch[0].length);
+    const teamPlayers = namesFor(team);
+
+    const sentences = body.split(/(?<=\.)\s+/).map(s => s.trim()).filter(Boolean);
+    for(const sentence of sentences){
+      const scoringMatch = sentence.match(/,?\s*scoring\s+([^.]+)\.?$/i);
+      let actionPart = sentence, scoredNames = [];
+      if(scoringMatch){
+        actionPart = sentence.slice(0, scoringMatch.index);
+        scoredNames = scoringMatch[1].split(/,\s*|\s+and\s+/).map(n => n.trim()).filter(Boolean);
+      }
+
+      const batter = teamPlayers.find(p => actionPart.includes(p.name));
+      if(!batter) continue;
+      const result = classifyResult(actionPart);
+      if(!result) continue;
+
+      claims.push({ team, inning, batterName: batter.name, result, scoredNames });
+    }
+  }
+  return claims;
+}
+
+function levenshtein(a, b){
+  const m = a.length, n = b.length;
+  const dp = Array.from({length: m+1}, (_,i) => [i, ...new Array(n).fill(0)]);
+  for(let j=0;j<=n;j++) dp[0][j] = j;
+  for(let i=1;i<=m;i++){
+    for(let j=1;j<=n;j++){
+      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+    }
+  }
+  return dp[m][n];
+}
+
+function matchClaims(groundTruth, extracted){
+  const groupKey = c => `${c.team}|${c.inning}`;
+  const gtGroups = {}, exGroups = {};
+  groundTruth.forEach(c => { (gtGroups[groupKey(c)] ||= []).push(c); });
+  extracted.forEach(c => { (exGroups[groupKey(c)] ||= []).push(c); });
+
+  const matched = [], unmatchedGT = [], unmatchedEx = [];
+  const allKeys = new Set([...Object.keys(gtGroups), ...Object.keys(exGroups)]);
+  allKeys.forEach(key => {
+    const gt = gtGroups[key] || [], ex = exGroups[key] || [];
+    const n = Math.min(gt.length, ex.length);
+    for(let i=0;i<n;i++) matched.push({ gt: gt[i], ex: ex[i] });
+    for(let i=n;i<gt.length;i++) unmatchedGT.push(gt[i]);
+    for(let i=n;i<ex.length;i++) unmatchedEx.push(ex[i]);
+  });
+  return { matched, unmatchedGT, unmatchedEx };
+}
+
+function scoreRecap(text){
+  const gt = groundTruthClaims();
+  const ex = extractClaimsFromText(text);
+  const { matched, unmatchedGT, unmatchedEx } = matchClaims(gt, ex);
+
+  const setEq = (a,b) => a.length===b.length && a.every(n=>b.includes(n));
+  let resultCorrect = 0, scoringCorrect = 0;
+  const details = matched.map(({gt, ex}) => {
+    const resultOk = gt.result === ex.result;
+    const scoringOk = setEq(gt.scoredNames||[], ex.scoredNames||[]);
+    if(resultOk) resultCorrect++;
+    if(scoringOk) scoringCorrect++;
+    return { team: gt.team, inning: gt.inning, batterName: gt.batterName,
+      groundTruthResult: gt.result, extractedResult: ex.result, resultOk, scoringOk };
+  });
+
+  const precision = ex.length ? matched.length / ex.length : (gt.length ? 0 : 1);
+  const recall = gt.length ? matched.length / gt.length : (ex.length ? 0 : 1);
+  const resultAccuracy = matched.length ? resultCorrect / matched.length : null;
+  const scoringAccuracy = matched.length ? scoringCorrect / matched.length : null;
+
+  const gtSeq = gt.map(c => `${c.team}:${c.inning}:${c.batterName}`);
+  const exSeq = ex.map(c => `${c.team}:${c.inning}:${c.batterName}`);
+  const orderingScore = 1 - levenshtein(gtSeq, exSeq) / Math.max(gtSeq.length, exSeq.length, 1);
+
+  return {
+    groundTruthCount: gt.length, extractedCount: ex.length, matchedCount: matched.length,
+    precision, recall, resultAccuracy, scoringAccuracy, orderingScore,
+    unmatchedGT, unmatchedEx, details,
+  };
+}
+
 function renderRecap(){
   const content = document.getElementById('recapContent');
   if(!game.recap){
     content.innerHTML = `<div style="font-size:12px; color:#8a9691;">No recap generated yet. Score a few innings, then tap Generate Recap.</div>`;
     return;
   }
-  content.innerHTML = `<div style="white-space:pre-wrap; font-family:'IBM Plex Mono'; font-size:13px; line-height:1.6;">${game.recap.text.replace(/</g,'&lt;')}</div>`;
+  const pct = (x) => x===null ? '—' : Math.round(x*100) + '%';
+  const score = scoreRecap(game.recap.text);
+  content.innerHTML = `
+    <div style="white-space:pre-wrap; font-family:'IBM Plex Mono'; font-size:13px; line-height:1.6; margin-bottom:16px;">${game.recap.text.replace(/</g,'&lt;')}</div>
+    <div class="box-section-title">Accuracy score</div>
+    <table class="box">
+      <tr><th>Content recall</th><td>${pct(score.recall)}</td></tr>
+      <tr><th>Content precision</th><td>${pct(score.precision)}</td></tr>
+      <tr><th>Result accuracy</th><td>${pct(score.resultAccuracy)}</td></tr>
+      <tr><th>Scoring accuracy</th><td>${pct(score.scoringAccuracy)}</td></tr>
+      <tr><th>Ordering score</th><td>${pct(score.orderingScore)}</td></tr>
+    </table>
+    <div style="font-size:11px; color:#8a9691; margin-top:8px;">${score.matchedCount}/${score.groundTruthCount} at-bats matched to text, ${score.extractedCount} claims extracted. Scored by parsing the text's prose against game data — not by trusting the generator's own bookkeeping.</div>
+  `;
 }
 
 /* ---------------- tabs / wiring ---------------- */
